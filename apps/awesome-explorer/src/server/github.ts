@@ -75,6 +75,14 @@ export class GitHub {
       throw new RateLimitError(resetTime(response.headers));
     }
     const body = (await response.text()).slice(0, 300);
+    // A secondary limit names itself only in the body, and GitHub asks for at
+    // least a minute's wait when it sends no retry-after.
+    if (
+      (response.status === 403 || response.status === 429) &&
+      /secondary rate limit/i.test(body)
+    ) {
+      throw new RateLimitError(new Date(Date.now() + 60_000));
+    }
     throw new GitHubError(
       response.status,
       `GitHub ${path}: ${response.status} ${body}`,

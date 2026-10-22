@@ -14,8 +14,9 @@ import { GitHubError, type GitHub, type StarWeek } from "./github.ts";
 // size, and refuses a batch of 25 for exceeding its resource budget.
 export const BATCH_SIZE = 10;
 const DAY = 86_400_000;
-// Five weeks of history always cover the last 30 days.
-const HISTORY_WEEKS = 5;
+// The newest week starts on the latest Sunday, so on a Sunday five weeks reach
+// back only 28 days; six always cover the last 30.
+const HISTORY_WEEKS = 6;
 
 export type MetricsResult =
   | { status: "found"; metrics: RepoMetrics }
@@ -30,15 +31,11 @@ export interface RawRepository {
   nameWithOwner: string;
   description: string | null;
   url: string;
-  homepageUrl: string | null;
   isArchived: boolean;
-  isFork: boolean;
   createdAt: string;
   stargazerCount: number;
-  forkCount: number;
   hasIssuesEnabled: boolean;
   primaryLanguage: { name: string } | null;
-  licenseInfo: { spdxId: string | null } | null;
   defaultBranchRef: {
     target: { committedDate?: string; history?: Count } | null;
   } | null;
@@ -49,18 +46,13 @@ export interface RawRepository {
   };
   openPullRequests: Count;
   mergedPullRequests: Count;
-  recentMergedPullRequests: {
-    nodes: ({ createdAt: string; mergedAt: string | null } | null)[];
-  };
-  latestRelease: { publishedAt: string | null } | null;
 }
 
 const FRAGMENT = `
 fragment Metrics on Repository {
-  nameWithOwner description url homepageUrl isArchived isFork createdAt
-  stargazerCount forkCount hasIssuesEnabled
+  nameWithOwner description url isArchived createdAt
+  stargazerCount hasIssuesEnabled
   primaryLanguage { name }
-  licenseInfo { spdxId }
   defaultBranchRef { target { ... on Commit { committedDate history(since: $since) { totalCount } } } }
   openIssues: issues(states: OPEN) { totalCount }
   closedIssues: issues(states: CLOSED) { totalCount }
@@ -69,10 +61,6 @@ fragment Metrics on Repository {
   }
   openPullRequests: pullRequests(states: OPEN) { totalCount }
   mergedPullRequests: pullRequests(states: MERGED) { totalCount }
-  recentMergedPullRequests: pullRequests(states: MERGED, first: 20, orderBy: { field: UPDATED_AT, direction: DESC }) {
-    nodes { createdAt mergedAt }
-  }
-  latestRelease { publishedAt }
 }`;
 
 /** One aliased `repository` lookup per name: r0, r1, … in the order given. */
@@ -93,6 +81,11 @@ function median(values: number[]): number | null {
       ? sorted[middle]!
       : (sorted[middle - 1]! + sorted[middle]!) / 2;
   return Math.round(value * 10) / 10;
+}
+
+/** Share of a backlog still open, or null when there has never been one. */
+function backlog(open: number, done: number): number | null {
+  return open + done === 0 ? null : open / (open + done);
 }
 
 function daysBetween(start: string, end: string | null): number[] {
@@ -119,33 +112,30 @@ export function toMetrics(
     repo: raw.nameWithOwner,
     description: raw.description,
     url: raw.url,
-    homepage: raw.homepageUrl || null,
     archived: raw.isArchived,
-    fork: raw.isFork,
     createdAt: raw.createdAt,
     lastCommitAt: head?.committedDate ?? null,
     commits90d: head?.history?.totalCount ?? 0,
     stars: raw.stargazerCount,
     stars30d: starsLast30Days(history, now),
-    forks: raw.forkCount,
     language: raw.primaryLanguage?.name ?? null,
-    license: raw.licenseInfo?.spdxId ?? null,
     issuesEnabled: raw.hasIssuesEnabled,
     openIssues: raw.openIssues.totalCount,
     closedIssues: raw.closedIssues.totalCount,
     openPullRequests: raw.openPullRequests.totalCount,
     mergedPullRequests: raw.mergedPullRequests.totalCount,
+    issueBacklog: raw.hasIssuesEnabled
+      ? backlog(raw.openIssues.totalCount, raw.closedIssues.totalCount)
+      : null,
+    pullRequestBacklog: backlog(
+      raw.openPullRequests.totalCount,
+      raw.mergedPullRequests.totalCount,
+    ),
     medianIssueCloseDays: median(
       raw.recentClosedIssues.nodes.flatMap((issue) =>
         issue ? daysBetween(issue.createdAt, issue.closedAt) : [],
       ),
     ),
-    medianPullRequestMergeDays: median(
-      raw.recentMergedPullRequests.nodes.flatMap((pr) =>
-        pr ? daysBetween(pr.createdAt, pr.mergedAt) : [],
-      ),
-    ),
-    latestReleaseAt: raw.latestRelease?.publishedAt ?? null,
   };
 }
 
@@ -180,12 +170,23 @@ async function toResult(
 /**
  * Metrics for each repository, keyed by the name as given. Rate limits and
  * network failures propagate, since every repository would fail the same way;
- * a request GitHub refuses is narrowed to the repository causing it.
+ * a request GitHub refuses is narrowed to the repository causing it. A server
+ * error that every repository in the batch then fails too is GitHub being
+ * down rather than refusing one query, so it propagates as well.
  */
 export async function fetchMetrics(
   github: Pick<GitHub, "graphql" | "starHistory">,
   repos: string[],
   now: Date,
+): Promise<Map<string, MetricsResult>> {
+  return fetchSplitting(github, repos, now, true);
+}
+
+async function fetchSplitting(
+  github: Pick<GitHub, "graphql" | "starHistory">,
+  repos: string[],
+  now: Date,
+  whole: boolean,
 ): Promise<Map<string, MetricsResult>> {
   const results = new Map<string, MetricsResult>();
   const since = new Date(now.getTime() - 90 * DAY).toISOString();
@@ -207,9 +208,19 @@ export async function fetchMetrics(
     }
     const middle = Math.ceil(repos.length / 2);
     for (const half of [repos.slice(0, middle), repos.slice(middle)]) {
-      for (const [repo, result] of await fetchMetrics(github, half, now))
+      for (const [repo, result] of await fetchSplitting(
+        github,
+        half,
+        now,
+        false,
+      ))
         results.set(repo, result);
     }
+    const outage =
+      whole &&
+      error.status >= 500 &&
+      [...results.values()].every((result) => result.status === "failed");
+    if (outage) throw error;
     return results;
   }
   await Promise.all(

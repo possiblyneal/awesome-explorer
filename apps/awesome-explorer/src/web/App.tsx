@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { INDEX_LIST } from "../shared/index-list.ts";
 import { DiscoverView } from "./DiscoverView.tsx";
 import { listHref } from "./format.ts";
 import { ListView } from "./ListView.tsx";
 
-const INDEX_LIST = "sindresorhus/awesome";
 const REPO = /^(?:https?:\/\/github\.com\/)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/;
 
 type Route =

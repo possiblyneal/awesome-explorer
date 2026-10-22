@@ -29,8 +29,6 @@ interface Column {
 
 const daysAgo = (iso: string | null | undefined) =>
   iso ? -Date.parse(iso) : undefined;
-const ratio = (open: number, done: number) =>
-  open + done === 0 ? undefined : open / (open + done);
 
 const COLUMNS: Column[] = [
   { key: "name", title: "Repository", value: (e) => e.repo.toLowerCase() },
@@ -89,8 +87,7 @@ const COLUMNS: Column[] = [
     title: "Backlog",
     hint: "share of all issues ever opened that are still open",
     numeric: true,
-    value: (e) =>
-      e.metrics && ratio(e.metrics.openIssues, e.metrics.closedIssues),
+    value: (e) => e.metrics?.issueBacklog,
   },
 ];
 
@@ -100,7 +97,14 @@ interface Filters {
   section: string;
   language: string;
   minStars: number;
+  /** Days since the last commit, or 0 for any. */
+  committedWithin: number;
+  /** Most open issues or pull requests allowed, or null for any. */
+  maxIssues: number | null;
+  maxPullRequests: number | null;
 }
+
+const DAY = 86_400_000;
 
 function matches(entry: ExploredEntry, filters: Filters): boolean {
   if (
@@ -113,6 +117,21 @@ function matches(entry: ExploredEntry, filters: Filters): boolean {
     return false;
   if (filters.minStars > 0 && (entry.metrics?.stars ?? 0) < filters.minStars)
     return false;
+  if (filters.committedWithin > 0) {
+    const last = entry.metrics?.lastCommitAt;
+    if (!last || Date.now() - Date.parse(last) > filters.committedWithin * DAY)
+      return false;
+  }
+  if (
+    filters.maxIssues !== null &&
+    (entry.metrics?.openIssues ?? Infinity) > filters.maxIssues
+  )
+    return false;
+  if (
+    filters.maxPullRequests !== null &&
+    (entry.metrics?.openPullRequests ?? Infinity) > filters.maxPullRequests
+  )
+    return false;
   if (filters.text) {
     const haystack = `${entry.repo} ${entry.name} ${entry.description} ${entry.metrics?.description ?? ""}`;
     if (!haystack.toLowerCase().includes(filters.text.toLowerCase()))
@@ -120,6 +139,8 @@ function matches(entry: ExploredEntry, filters: Filters): boolean {
   }
   return true;
 }
+
+const optionalCount = (value: string) => (value === "" ? null : Number(value));
 
 /** Compares with missing values last, whichever the direction. */
 function compare(a: SortValue, b: SortValue, descending: boolean): number {
@@ -137,15 +158,21 @@ function useList(repo: string) {
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    // A failed poll retries while metrics were still arriving, so one dropped
+    // request does not freeze the list half-filled.
+    let lastPending = 0;
     async function load() {
       try {
         const view = await fetchList(repo);
         if (cancelled) return;
         setData(view);
         setError(undefined);
+        lastPending = view.pending;
         if (view.pending > 0) timer = window.setTimeout(load, POLL_MS);
       } catch (reason) {
-        if (!cancelled) setError((reason as Error).message);
+        if (cancelled) return;
+        setError((reason as Error).message);
+        if (lastPending > 0) timer = window.setTimeout(load, POLL_MS);
       }
     }
     void load();
@@ -174,7 +201,6 @@ function HealthCell({ entry }: { entry: ExploredEntry }) {
 
 function Row({ entry }: { entry: ExploredEntry }) {
   const m = entry.metrics;
-  const backlog = m && ratio(m.openIssues, m.closedIssues);
   return (
     <tr className={m?.archived ? "archived" : undefined}>
       <td>
@@ -214,7 +240,7 @@ function Row({ entry }: { entry: ExploredEntry }) {
         {m?.medianIssueCloseDays != null ? `${m.medianIssueCloseDays}d` : ""}
       </td>
       <td className="num">
-        {backlog !== undefined ? `${Math.round(backlog * 100)}%` : ""}
+        {m?.issueBacklog != null ? `${Math.round(m.issueBacklog * 100)}%` : ""}
       </td>
     </tr>
   );
@@ -228,6 +254,9 @@ export function ListView({ repo }: { repo: string }) {
     section: "",
     language: "",
     minStars: 0,
+    committedWithin: 0,
+    maxIssues: null,
+    maxPullRequests: null,
   });
   const [sort, setSort] = useState({ key: "score", descending: true });
 
@@ -363,6 +392,49 @@ export function ListView({ repo }: { repo: string }) {
                   setFilters({
                     ...filters,
                     minStars: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <select
+              value={filters.committedWithin}
+              onChange={(event) =>
+                setFilters({
+                  ...filters,
+                  committedWithin: Number(event.target.value),
+                })
+              }
+              aria-label="Last commit within"
+            >
+              <option value={0}>Any activity</option>
+              <option value={30}>Commit within 30 days</option>
+              <option value={90}>Commit within 90 days</option>
+              <option value={365}>Commit within a year</option>
+            </select>
+            <label>
+              max open issues{" "}
+              <input
+                type="number"
+                min={0}
+                value={filters.maxIssues ?? ""}
+                onChange={(event) =>
+                  setFilters({
+                    ...filters,
+                    maxIssues: optionalCount(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <label>
+              max open PRs{" "}
+              <input
+                type="number"
+                min={0}
+                value={filters.maxPullRequests ?? ""}
+                onChange={(event) =>
+                  setFilters({
+                    ...filters,
+                    maxPullRequests: optionalCount(event.target.value),
                   })
                 }
               />

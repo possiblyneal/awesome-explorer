@@ -9,13 +9,12 @@ import type {
   ListEntry,
   ListView,
 } from "../shared/types.ts";
+import { INDEX_LIST } from "../shared/index-list.ts";
 import { RateLimitError, type GitHub } from "./github.ts";
 import { assessHealth } from "./health.ts";
 import { BATCH_SIZE, fetchMetrics, type MetricsResult } from "./metrics.ts";
 import { parseAwesomeList } from "./readme.ts";
 import type { Cached, Store } from "./store.ts";
-
-export const INDEX_LIST = "sindresorhus/awesome";
 
 const HOUR = 3_600_000;
 const FRESH_FOR = 24 * HOUR;

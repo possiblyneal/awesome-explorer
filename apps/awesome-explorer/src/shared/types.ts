@@ -7,28 +7,25 @@ export interface RepoMetrics {
   repo: string;
   description: string | null;
   url: string;
-  homepage: string | null;
   archived: boolean;
-  fork: boolean;
   createdAt: string;
   lastCommitAt: string | null;
   commits90d: number;
   stars: number;
-  /** Stars gained in the last 30 days, counted up to 100. */
+  /** Stars gained in the last 30 days. */
   stars30d: number;
-  forks: number;
   language: string | null;
-  license: string | null;
   issuesEnabled: boolean;
   openIssues: number;
   closedIssues: number;
   openPullRequests: number;
   mergedPullRequests: number;
+  /** Share of all issues ever opened that are still open; null with issues off or none filed. */
+  issueBacklog: number | null;
+  /** Share of open and merged pull requests still open; null when there has been none. */
+  pullRequestBacklog: number | null;
   /** Median days from opening to closing, over the 20 most recently updated closed issues. */
   medianIssueCloseDays: number | null;
-  /** Median days from opening to merging, over the 20 most recently updated merged pull requests. */
-  medianPullRequestMergeDays: number | null;
-  latestReleaseAt: string | null;
 }
 
 export interface Health {

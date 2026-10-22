@@ -21,15 +21,11 @@ function raw(name: string): RawRepository {
     nameWithOwner: name,
     description: "A thing",
     url: `https://github.com/${name}`,
-    homepageUrl: "",
     isArchived: false,
-    isFork: false,
     createdAt: daysAgo(1000),
     stargazerCount: 1234,
-    forkCount: 56,
     hasIssuesEnabled: true,
     primaryLanguage: { name: "Go" },
-    licenseInfo: { spdxId: "MIT" },
     defaultBranchRef: {
       target: { committedDate: daysAgo(2), history: { totalCount: 42 } },
     },
@@ -44,8 +40,6 @@ function raw(name: string): RawRepository {
     },
     openPullRequests: { totalCount: 3 },
     mergedPullRequests: { totalCount: 70 },
-    recentMergedPullRequests: { nodes: [] },
-    latestRelease: null,
   };
 }
 
@@ -68,13 +62,32 @@ describe("starsLast30Days", () => {
     // 2026-09-01 is 30 days before NOW, the Tuesday of the older week.
     expect(starsLast30Days(HISTORY, NOW)).toBe(5 + 50);
   });
+
+  it("covers the last 30 days on a Sunday, when the newest week is a day old", () => {
+    const sunday = new Date("2026-10-04T12:00:00Z");
+    const weeks = [
+      "2026-10-04",
+      "2026-09-27",
+      "2026-09-20",
+      "2026-09-13",
+      "2026-09-06",
+      "2026-08-30",
+    ];
+    const history = weeks.map((week, index) => ({
+      week: Date.parse(week) / 1000,
+      total: index === 0 ? 1 : 7,
+      days: index === 0 ? [1, 0, 0, 0, 0, 0, 0] : [1, 1, 1, 1, 1, 1, 1],
+    }));
+    // 30 days back from Sunday noon reaches 2026-09-04 noon, so the days from
+    // 09-05 through 10-04 count; five weeks would stop at 09-06.
+    expect(starsLast30Days(history, sunday)).toBe(30);
+  });
 });
 
 describe("toMetrics", () => {
   it("maps GitHub's fields and derives medians and recent stars", () => {
     expect(toMetrics(raw("acme/thing"), HISTORY, NOW)).toMatchObject({
       repo: "acme/thing",
-      homepage: null,
       lastCommitAt: daysAgo(2),
       commits90d: 42,
       stars: 1234,
@@ -82,10 +95,27 @@ describe("toMetrics", () => {
       language: "Go",
       openIssues: 10,
       closedIssues: 90,
+      issueBacklog: 0.1,
       medianIssueCloseDays: 3,
-      medianPullRequestMergeDays: null,
-      latestReleaseAt: null,
     });
+  });
+
+  it("leaves the issue backlog empty when issues are off or never opened", () => {
+    expect(
+      toMetrics({ ...raw("acme/off"), hasIssuesEnabled: false }, [], NOW)
+        .issueBacklog,
+    ).toBeNull();
+    expect(
+      toMetrics(
+        {
+          ...raw("acme/new"),
+          openPullRequests: { totalCount: 0 },
+          mergedPullRequests: { totalCount: 0 },
+        },
+        [],
+        NOW,
+      ).pullRequestBacklog,
+    ).toBeNull();
   });
 
   it("skips nodes GitHub nulls", () => {
@@ -177,6 +207,18 @@ describe("fetchMetrics", () => {
       [...results.values()].filter((r) => r.status === "found"),
     ).toHaveLength(3);
     expect(calls).toBe(5);
+  });
+
+  it("propagates an outage that fails every repository in the batch", async () => {
+    const github = {
+      starHistory: async () => HISTORY,
+      graphql: async () => {
+        throw new GitHubError(503, "unavailable");
+      },
+    };
+    await expect(
+      fetchMetrics(github, ["a/one", "a/two", "a/three"], NOW),
+    ).rejects.toThrow("unavailable");
   });
 
   it("fails only the repository whose star history GitHub refuses", async () => {

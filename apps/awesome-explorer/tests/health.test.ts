@@ -11,25 +11,21 @@ function repo(overrides: Partial<RepoMetrics>): RepoMetrics {
     repo: "acme/thing",
     description: null,
     url: "https://github.com/acme/thing",
-    homepage: null,
     archived: false,
-    fork: false,
     createdAt: daysAgo(2000),
     lastCommitAt: daysAgo(10),
     commits90d: 20,
     stars: 5000,
     stars30d: 20,
-    forks: 100,
     language: "TypeScript",
-    license: "MIT",
     issuesEnabled: true,
     openIssues: 50,
     closedIssues: 950,
     openPullRequests: 5,
     mergedPullRequests: 500,
+    issueBacklog: 0.05,
+    pullRequestBacklog: 0.01,
     medianIssueCloseDays: 3,
-    medianPullRequestMergeDays: 1,
-    latestReleaseAt: daysAgo(20),
     ...overrides,
   };
 }
@@ -65,12 +61,25 @@ describe("assessHealth", () => {
   it("calls an established, maintained repository with a small backlog mature", () => {
     expect(assessHealth(repo({}), NOW).label).toBe("mature");
     expect(
-      assessHealth(repo({ openIssues: 400, closedIssues: 600 }), NOW).label,
+      assessHealth(
+        repo({ openIssues: 400, closedIssues: 600, issueBacklog: 0.4 }),
+        NOW,
+      ).label,
     ).toBe("active");
   });
 
   it("calls a busy repository that is not established active", () => {
     expect(assessHealth(repo({ stars: 300 }), NOW).label).toBe("active");
+  });
+
+  it("calls a lightly developed repository that fixes issues fast active", () => {
+    const light = { stars: 300, commits90d: 2 };
+    const fast = assessHealth(repo({ ...light, medianIssueCloseDays: 7 }), NOW);
+    expect(fast).toMatchObject({ label: "active" });
+    expect(fast.reasons[0]).toContain("fixing issues fast");
+    expect(
+      assessHealth(repo({ ...light, medianIssueCloseDays: 8 }), NOW).label,
+    ).toBe("stale");
   });
 
   it("calls a quiet repository stale", () => {
@@ -90,6 +99,7 @@ describe("assessHealth", () => {
         medianIssueCloseDays: 90,
         openIssues: 900,
         closedIssues: 100,
+        issueBacklog: 0.9,
       }),
       NOW,
     ).score;
