@@ -51,6 +51,7 @@ export interface ExploredEntry extends ListEntry {
 }
 
 export interface ListView {
+  /** The list's `owner/name`, or `STARS_LIST` for the operator's stars. */
   repo: string;
   fetchedAt: string;
   entries: ExploredEntry[];
@@ -67,4 +68,17 @@ export interface DiscoveredList {
   topics: string[];
   /** Whether sindresorhus/awesome already links to it. */
   inIndex: boolean;
+}
+
+export type TrendingPeriod = "daily" | "weekly" | "monthly";
+
+export interface TrendingRepo {
+  repo: string;
+  description: string | null;
+  language: string | null;
+  stars: number;
+  /** Stars gained in each period the repository trends in. */
+  gained: Partial<Record<TrendingPeriod, number>>;
+  /** The best of those gains per day; trending is ranked by it. */
+  starsPerDay: number;
 }

@@ -1,19 +1,24 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { INDEX_LIST } from "../shared/index-list.ts";
+import { INDEX_LIST, STARS_LIST } from "../shared/index-list.ts";
 import { DiscoverView } from "./DiscoverView.tsx";
 import { listHref } from "./format.ts";
 import { ListView } from "./ListView.tsx";
+import { TrendingView } from "./TrendingView.tsx";
 
 const REPO = /^(?:https?:\/\/github\.com\/)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/;
 
 type Route =
   | { page: "home" }
   | { page: "list"; repo: string }
+  | { page: "stars" }
+  | { page: "trending" }
   | { page: "search"; query: string };
 
 function parseRoute(hash: string): Route {
   const list = /^#\/list\/([\w.-]+\/[\w.-]+)/.exec(hash);
   if (list) return { page: "list", repo: list[1]! };
+  if (hash === "#/stars") return { page: "stars" };
+  if (hash === "#/trending") return { page: "trending" };
   const search = /^#\/search\/(.*)$/.exec(hash);
   if (search) return { page: "search", query: decodeURIComponent(search[1]!) };
   return { page: "home" };
@@ -60,12 +65,18 @@ export function App() {
         <a className="brand" href="#/">
           Awesome Explorer
         </a>
+        <a href="#/trending">Trending</a>
+        <a href="#/stars">My stars</a>
         <SearchBox />
       </header>
       <main>
         {route.page === "list" && (
           <ListView key={route.repo} repo={route.repo} />
         )}
+        {route.page === "stars" && (
+          <ListView key={STARS_LIST} repo={STARS_LIST} />
+        )}
+        {route.page === "trending" && <TrendingView />}
         {route.page === "search" && (
           <DiscoverView key={route.query} query={route.query} />
         )}

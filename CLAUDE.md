@@ -47,7 +47,7 @@ Every unit has a `.unit.json` at its root, never at a domain's:
 
 ## Purpose
 
-Awesome Explorer: a web app for exploring GitHub awesome lists. It reads a list's README, fetches each linked repository's metrics, and labels its health so the operator can see what is best now, what is rising, and what to skip. `sindresorhus/awesome` is the root, and discovery searches GitHub for lists the root leaves out.
+Awesome Explorer: a web app for exploring GitHub awesome lists. It reads a list's README, fetches each linked repository's metrics, and labels its health so the operator can see what is best now, what is rising, and what to skip. `sindresorhus/awesome` is the root, discovery searches GitHub for lists the root leaves out, the operator's own stars can be explored the same way, and trending surfaces new repositories they have not starred.
 
 ## Ownership
 

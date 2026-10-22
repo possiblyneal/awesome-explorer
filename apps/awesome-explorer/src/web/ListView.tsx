@@ -4,7 +4,8 @@ import type {
   HealthLabel,
   ListView as ListData,
 } from "../shared/types.ts";
-import { fetchList } from "./api.ts";
+import { STARS_LIST } from "../shared/index-list.ts";
+import { fetchList, fetchStars } from "./api.ts";
 import { ago, compact, listHref } from "./format.ts";
 
 const POLL_MS = 3000;
@@ -163,7 +164,9 @@ function useList(repo: string) {
     let lastPending = 0;
     async function load() {
       try {
-        const view = await fetchList(repo);
+        const view = await (repo === STARS_LIST
+          ? fetchStars()
+          : fetchList(repo));
         if (cancelled) return;
         setData(view);
         setError(undefined);
@@ -246,7 +249,9 @@ function Row({ entry }: { entry: ExploredEntry }) {
   );
 }
 
+/** One list's entries, or with `STARS_LIST` the operator's starred repositories. */
 export function ListView({ repo }: { repo: string }) {
+  const stars = repo === STARS_LIST;
   const { data, error } = useList(repo);
   const [filters, setFilters] = useState<Filters>({
     text: "",
@@ -311,11 +316,13 @@ export function ListView({ repo }: { repo: string }) {
       <div className="panel-head">
         <h2>
           <a
-            href={`https://github.com/${repo}`}
+            href={
+              stars ? "https://github.com/stars" : `https://github.com/${repo}`
+            }
             target="_blank"
             rel="noreferrer"
           >
-            {repo}
+            {stars ? "Your starred repositories" : repo}
           </a>
         </h2>
         {data && (
@@ -328,9 +335,17 @@ export function ListView({ repo }: { repo: string }) {
       {(error ?? data?.error) && (
         <p className="error">{error ?? data?.error}</p>
       )}
-      {!data && !error && <p className="muted">Reading the list…</p>}
+      {!data && !error && (
+        <p className="muted">
+          {stars ? "Reading your stars…" : "Reading the list…"}
+        </p>
+      )}
       {data && entries.length === 0 && (
-        <p className="muted">This README links to no GitHub repositories.</p>
+        <p className="muted">
+          {stars
+            ? "You have not starred any repositories."
+            : "This README links to no GitHub repositories."}
+        </p>
       )}
       {entries.length > 0 && (
         <>

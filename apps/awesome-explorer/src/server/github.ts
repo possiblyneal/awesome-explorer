@@ -35,6 +35,12 @@ export interface SearchItem {
   topics?: string[];
 }
 
+export interface StarredItem {
+  full_name: string;
+  name: string;
+  description: string | null;
+}
+
 /** Stars gained in one week, newest week first; `days[0]` is the week's Sunday. */
 export interface StarWeek {
   week: number;
@@ -95,6 +101,19 @@ export class GitHub {
       headers: { accept: "application/vnd.github.raw" },
     });
     return response.status === 404 ? null : response.text();
+  }
+
+  /** Every repository the token's user has starred, most recently starred first. */
+  async starred(): Promise<StarredItem[]> {
+    const items: StarredItem[] = [];
+    for (let page = 1; ; page++) {
+      const response = await this.#request(
+        `/user/starred?per_page=100&page=${page}`,
+      );
+      const batch = (await response.json()) as StarredItem[];
+      items.push(...batch);
+      if (batch.length < 100) return items;
+    }
   }
 
   async searchRepositories(query: string): Promise<SearchItem[]> {
