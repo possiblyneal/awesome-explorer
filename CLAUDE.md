@@ -47,14 +47,27 @@ Every unit has a `.unit.json` at its root, never at a domain's:
 
 ## Purpose
 
+Awesome Explorer: a web app for exploring GitHub awesome lists. It reads a list's README, fetches each linked repository's metrics, and labels its health so the operator can see what is best now, what is rising, and what to skip. `sindresorhus/awesome` is the root, and discovery searches GitHub for lists the root leaves out.
+
 ## Ownership
+
+Single operator (see `GLOSSARY.md`). One unit, `apps/awesome-explorer`, run longlived on the homelab.
 
 ## Local Contracts
 
+- The root `package.json` is an npm workspace over `apps/awesome-explorer`; its scripts delegate to the member, which is what `scripts/check` runs.
+- The GitHub token comes from `GITHUB_TOKEN` or `gh auth token` at startup. Never commit or log it.
+- Runtime data lives in `apps/awesome-explorer/state/` (gitignored SQLite cache); deleting it only costs a refetch.
+
 ## Work Guidance
+
+- Domain words (list, entry, index, discovery, health label) are defined in `GLOSSARY.md`; use them.
+- GitHub API quirks this app depends on are in `docs/LESSONS.md`; read it before changing a query.
 
 ## Verification
 
+- `scripts/check` — the full gate, including the unit's typecheck, lint, vitest suite, and vite build.
+
 ## Child Index
 
-This project is not yet indexed. Before continuing you must scan the repository, create a `CLAUDE.md` in every child folder that is a durable boundary, and replace this message with one bullet per child `CLAUDE.md` — its path, then what that file owns. Go deep and scan files recursively to properly evaluate complexity. Do not create `CLAUDE.md` files in dot folders.
+- `apps/awesome-explorer/CLAUDE.md` — the app: server, web UI, shared types, health rules, and GitHub data fetching
