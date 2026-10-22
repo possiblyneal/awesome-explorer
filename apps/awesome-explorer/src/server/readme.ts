@@ -57,12 +57,24 @@ export function repoFromUrl(url: string): string | null {
   return `${owner}/${name}`;
 }
 
+/** Removes tags until none remain, so a removal cannot join two halves into a new tag. */
+function stripTags(html: string): string {
+  let text = html;
+  let previous;
+  do {
+    previous = text;
+    text = text.replace(/<[^<>]*>/g, "");
+  } while (text !== previous);
+  return text;
+}
+
 /** Markdown and HTML reduced to readable text. */
 function plainText(markdown: string): string {
-  return markdown
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/<[^>]+>/g, "")
+  return stripTags(
+    markdown
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1"),
+  )
     .replace(/[*_`]/g, "")
     .replace(/\s+/g, " ")
     .trim();

@@ -33,6 +33,7 @@ describe("parseAwesomeList", () => {
     "* [Beta](https://github.com/acme/beta.git): A beta.",
     "- [Alpha again](https://github.com/ACME/Alpha) - Duplicate.",
     "- [Self](https://github.com/me/awesome-things/blob/main/contributing.md)",
+    "- [Zeta](https://github.com/acme/zeta) - Nested <<b>b>tags</b> stripped.",
     "",
     "### Sub section",
     "",
@@ -50,6 +51,7 @@ describe("parseAwesomeList", () => {
     expect(entries.map((e) => e.repo)).toEqual([
       "acme/alpha",
       "acme/beta",
+      "acme/zeta",
       "acme/gamma",
       "acme/delta",
       "acme/epsilon",
@@ -64,11 +66,12 @@ describe("parseAwesomeList", () => {
       description: "Does alpha things, see docs.",
     });
     expect(entries[1]!.description).toBe("A beta.");
-    expect(entries[2]!.section).toBe("Sub section");
+    expect(entries[2]!.description).toBe("Nested tags stripped.");
+    expect(entries[3]!.section).toBe("Sub section");
   });
 
   it("gives only the line's first repository the description", () => {
-    expect(entries[2]!.description).toBe("Wraps delta.");
-    expect(entries[3]!.description).toBe("");
+    expect(entries[3]!.description).toBe("Wraps delta.");
+    expect(entries[4]!.description).toBe("");
   });
 });
