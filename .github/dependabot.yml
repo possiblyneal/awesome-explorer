@@ -85,3 +85,16 @@ updates:
       pre-commit:
         patterns:
           - "*"
+
+  # The root package.json declares the npm workspace, so this one entry bumps
+  # apps/awesome-explorer and moves the root package-lock.json with it.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns:
+          - "*"

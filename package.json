@@ -1,0 +1,20 @@
+{
+  "name": "awesome-explorer-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/awesome-explorer"
+  ],
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "format": "npm run format --workspaces",
+    "format:check": "npm run format:check --workspaces",
+    "lint": "npm run lint --workspaces",
+    "lint:fix": "npm run lint:fix --workspaces",
+    "test": "npm run test --workspaces",
+    "typecheck": "npm run typecheck --workspaces"
+  }
+}
