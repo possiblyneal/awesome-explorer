@@ -19,3 +19,10 @@ GitHub restricted stargazer listings to admins and collaborators in 2026: GraphQ
 
 **Do:** use `GET /repos/{owner}/{repo}/stargazers/history`, weekly buckets newest first with per-day counts.
 **Source:** https://github.blog/changelog/2026-09-04-new-api-endpoint-provides-privacy-safe-star-history-data/
+
+## Load the Vite config natively under node --watch
+
+Vite's default `bundle` config loader writes a temp `.mjs` copy of `vite.config.ts`, imports it, then deletes it; `node --watch` sees that import change and restarts the dev server in a loop.
+
+**Do:** keep `configLoader: "native"` in the `createServer` call in `apps/awesome-explorer/src/server/main.ts`.
+**Source:** https://vite.dev/guide/cli

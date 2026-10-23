@@ -47,7 +47,7 @@ Every unit has a `.unit.json` at its root, never at a domain's:
 
 ## Purpose
 
-Awesome Explorer: a web app for exploring GitHub awesome lists. It reads a list's README, fetches each linked repository's metrics, and labels its health so the operator can see what is best now, what is rising, and what to skip. `sindresorhus/awesome` is the root, and discovery searches GitHub for lists the root leaves out.
+Awesome Explorer: a web app for exploring GitHub awesome lists. It reads a list's README, fetches each linked repository's metrics, and labels its health so the operator can see what is best now, what is rising, and what to skip. `sindresorhus/awesome` is the root, discovery searches GitHub for lists the root leaves out, the operator's own stars can be explored the same way, and trending surfaces new repositories they have not starred.
 
 ## Ownership
 
@@ -57,7 +57,7 @@ Single operator (see `GLOSSARY.md`). One unit, `apps/awesome-explorer`, run long
 
 - The root `package.json` is an npm workspace over `apps/awesome-explorer`; its scripts delegate to the member, which is what `scripts/check` runs.
 - The GitHub token comes from `GITHUB_TOKEN` or `gh auth token` at startup. Never commit or log it.
-- Runtime data lives in `apps/awesome-explorer/state/` (gitignored SQLite cache); deleting it only costs a refetch.
+- Runtime data lives in `apps/awesome-explorer/state/` (gitignored SQLite): the GitHub cache plus the operator's trending dismissals and snoozes. Deleting it refetches the cache and forgets every dismissal.
 
 ## Work Guidance
 

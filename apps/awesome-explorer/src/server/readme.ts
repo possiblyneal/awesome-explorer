@@ -1,6 +1,6 @@
 // Turns an awesome list's README into the repositories it recommends. Only
-// list items and table rows are read, so badges, prose, and footers that link
-// to GitHub do not become entries.
+// list items, quoted items, and table rows are read, so badges, prose, and
+// footers that link to GitHub do not become entries.
 
 import type { ListEntry } from "../shared/types.ts";
 
@@ -41,9 +41,14 @@ const MARKDOWN_LINK =
   /\[((?:[^[\]]|\[[^\]]*\])*)\]\(\s*<?(https?:\/\/[^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
 const HTML_LINK =
   /<a\s[^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-const ITEM_LINE = /^\s*(?:[-*+]\s|\d+[.)]\s|\||<li|<td|<tr)/i;
+// A quoted line counts only when an item or a link opens it, so a blockquote
+// tagline that mentions other lists stays prose.
+const ITEM_LINE =
+  /^\s*(?:[-*+]\s|\d+[.)]\s|>\s*(?:[-*+]\s|\d+[.)]\s|\**\[)|\||<li|<td|<tr)/i;
+// A table's divider row; the rows under it need not start with a pipe.
+const TABLE_DIVIDER = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
 const HEADING = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/;
-const SEPARATOR = /^\s*[-–—:]\s+(.+)$/;
+const SEPARATOR = /^\s*(?:[-–—:]\s+(.+)|\|\s*([^|]+))/;
 
 /** `owner/name` for a GitHub repository URL, or null for any other link. */
 export function repoFromUrl(url: string): string | null {
@@ -58,7 +63,7 @@ export function repoFromUrl(url: string): string | null {
 }
 
 /** Removes tags until none remain, so a removal cannot join two halves into a new tag. */
-function stripTags(html: string): string {
+export function stripTags(html: string): string {
   let text = html;
   let previous;
   do {
@@ -114,6 +119,7 @@ export function parseAwesomeList(
   const entries: ListEntry[] = [];
   let section = "";
   let inFence = false;
+  let inTable = false;
 
   for (const line of markdown.split(/\r?\n/)) {
     if (/^\s*(```|~~~)/.test(line)) {
@@ -121,13 +127,18 @@ export function parseAwesomeList(
       continue;
     }
     if (inFence) continue;
+    if (TABLE_DIVIDER.test(line)) {
+      inTable = true;
+      continue;
+    }
+    if (!line.trim()) inTable = false;
 
     const heading = HEADING.exec(line);
     if (heading) {
       section = plainText(heading[1]!);
       continue;
     }
-    if (!ITEM_LINE.test(line)) continue;
+    if (!ITEM_LINE.test(line) && !(inTable && line.includes("|"))) continue;
 
     let first = true;
     for (const link of linksIn(line)) {
@@ -138,10 +149,10 @@ export function parseAwesomeList(
       first = false;
       if (key === self || seen.has(key)) continue;
       seen.add(key);
-      // The description follows the line's first repository link, after a dash or colon.
-      const description = isFirst
-        ? (SEPARATOR.exec(line.slice(link.end))?.[1] ?? "")
-        : "";
+      // The description follows the line's first repository link, after a
+      // dash or colon, or in the table cell after it.
+      const separated = isFirst ? SEPARATOR.exec(line.slice(link.end)) : null;
+      const description = separated?.[1] ?? separated?.[2] ?? "";
       entries.push({
         repo,
         name: plainText(link.text) || repo.split("/")[1]!,
@@ -151,4 +162,30 @@ export function parseAwesomeList(
     }
   }
   return entries;
+}
+
+const OUTBOUND_LINK =
+  /(?<!!)\[[^\]]*\]\(\s*<?(https?:\/\/[^)\s>]+)|href=["'](https?:\/\/[^"']+)|<(https?:\/\/[^>\s]+)>/gi;
+const IMAGE_URL = /\.(?:svg|png|gif|jpe?g|webp)$/;
+
+/**
+ * Distinct links out of the README, wherever they sit, leaving out images,
+ * linked badges, and the repository's own pages. Curated lists carry
+ * hundreds; product READMEs that tag themselves `awesome` carry a few dozen
+ * at most.
+ */
+export function countOutboundLinks(markdown: string, repo: string): number {
+  const own = `github.com/${repo.toLowerCase()}`;
+  const targets = new Set<string>();
+  for (const match of markdown.matchAll(OUTBOUND_LINK)) {
+    const url = (match[1] ?? match[2] ?? match[3])!
+      .toLowerCase()
+      .replace(/^https?:\/\/(?:www\.)?/, "")
+      .replace(/[#?].*$/, "")
+      .replace(/\/$/, "");
+    if (url === own || url.startsWith(`${own}/`) || IMAGE_URL.test(url))
+      continue;
+    targets.add(url);
+  }
+  return targets.size;
 }
