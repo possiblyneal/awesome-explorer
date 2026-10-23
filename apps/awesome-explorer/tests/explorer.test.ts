@@ -121,4 +121,17 @@ describe("Explorer.trending", () => {
     subject.snooze("acme/snoozed");
     expect((await subject.trending()).map((r) => r.repo)).toEqual(["acme/new"]);
   });
+
+  it.each(["dismiss", "snooze"] as const)(
+    "shows a repository again after restoring it from %s",
+    async (action) => {
+      const subject = explorer([], [trend("acme/new", 10)]);
+      subject[action]("Acme/New");
+      expect(await subject.trending()).toEqual([]);
+      subject.restore("acme/NEW");
+      expect((await subject.trending()).map((r) => r.repo)).toEqual([
+        "acme/new",
+      ]);
+    },
+  );
 });

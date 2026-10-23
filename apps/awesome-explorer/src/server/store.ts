@@ -100,6 +100,11 @@ export class Store {
       .run(key, until);
   }
 
+  /** Lifts a repository's dismissal or snooze. */
+  deleteDismissal(key: string): void {
+    this.#db.prepare("DELETE FROM dismissals WHERE repo = ?").run(key);
+  }
+
   /** Repositories hidden from trending at `now`. */
   getDismissed(now: number): Set<string> {
     const rows = this.#db
