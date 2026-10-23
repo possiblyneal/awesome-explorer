@@ -76,6 +76,8 @@ export interface TrendingRepo {
   repo: string;
   description: string | null;
   language: string | null;
+  /** The language's swatch color on the trending page; null without a language. */
+  languageColor: string | null;
   stars: number;
   /** Stars gained in each period the repository trends in. */
   gained: Partial<Record<TrendingPeriod, number>>;
