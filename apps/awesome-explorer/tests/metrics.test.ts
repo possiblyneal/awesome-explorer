@@ -4,12 +4,15 @@ import {
   type GraphQLResponse,
   type StarWeek,
 } from "../src/server/github.ts";
+import type { RawActivity } from "../src/server/activity.ts";
 import {
   buildQuery,
-  fetchMetrics,
+  completeMetrics,
+  lookUpRepositories,
   toMetrics,
   starsLast30Days,
   starsPerDayLastWeek,
+  type MetricsResult,
   type RawRepository,
 } from "../src/server/metrics.ts";
 
@@ -23,6 +26,7 @@ function raw(name: string): RawRepository {
     description: "A thing",
     url: `https://github.com/${name}`,
     isArchived: false,
+    isFork: false,
     createdAt: daysAgo(1000),
     stargazerCount: 1234,
     hasIssuesEnabled: true,
@@ -30,18 +34,28 @@ function raw(name: string): RawRepository {
     defaultBranchRef: {
       target: { committedDate: daysAgo(2), history: { totalCount: 42 } },
     },
+    latestRelease: { publishedAt: daysAgo(20) },
+    licenseInfo: { spdxId: "MIT" },
     openIssues: { totalCount: 10 },
-    closedIssues: { totalCount: 90 },
-    recentClosedIssues: {
-      nodes: [
-        { createdAt: daysAgo(10), closedAt: daysAgo(9) },
-        { createdAt: daysAgo(10), closedAt: daysAgo(7) },
-        { createdAt: daysAgo(10), closedAt: daysAgo(0) },
-      ],
-    },
-    openPullRequests: { totalCount: 3 },
-    mergedPullRequests: { totalCount: 70 },
+    openPullRequests: { totalCount: 2 },
   };
+}
+
+const ACTIVITY: RawActivity = {
+  recent: { issueCount: 0, nodes: [] },
+  recentOpen: { issueCount: 0 },
+  oldOpen: { issueCount: 3 },
+  repository: null,
+};
+
+/** Answers activity queries with ACTIVITY and the rest with `metrics`. */
+function graphql(
+  metrics: (query: string) => Promise<unknown>,
+): <T>(query: string) => Promise<GraphQLResponse<T>> {
+  return async <T>(query: string) =>
+    (query.includes("recentOpen")
+      ? { data: ACTIVITY, errors: [] }
+      : await metrics(query)) as GraphQLResponse<T>;
 }
 
 // NOW is a Thursday; its week began on Sunday 2026-09-27.
@@ -109,50 +123,42 @@ describe("starsPerDayLastWeek", () => {
 });
 
 describe("toMetrics", () => {
-  it("maps GitHub's fields and derives medians and recent stars", () => {
-    expect(toMetrics(raw("acme/thing"), HISTORY, NOW)).toMatchObject({
+  it("maps GitHub's fields and derives activity and recent stars", () => {
+    expect(toMetrics(raw("acme/thing"), HISTORY, ACTIVITY, NOW)).toMatchObject({
       repo: "acme/thing",
       lastCommitAt: daysAgo(2),
       commits90d: 42,
       stars: 1234,
       stars30d: 55,
       language: "Go",
+      license: "MIT",
+      lastReleaseAt: daysAgo(20),
+      fork: false,
       openIssues: 10,
-      closedIssues: 90,
-      issueBacklog: 0.1,
-      medianIssueCloseDays: 3,
+      oldOpenShare: 0.25,
+      backlog: null,
     });
   });
 
-  it("leaves the issue backlog empty when issues are off or never opened", () => {
-    expect(
-      toMetrics({ ...raw("acme/off"), hasIssuesEnabled: false }, [], NOW)
-        .issueBacklog,
-    ).toBeNull();
+  it("leaves the license empty when GitHub cannot identify it", () => {
     expect(
       toMetrics(
-        {
-          ...raw("acme/new"),
-          openPullRequests: { totalCount: 0 },
-          mergedPullRequests: { totalCount: 0 },
-        },
+        { ...raw("acme/odd"), licenseInfo: { spdxId: "NOASSERTION" } },
         [],
+        ACTIVITY,
         NOW,
-      ).pullRequestBacklog,
+      ).license,
     ).toBeNull();
-  });
-
-  it("skips nodes GitHub nulls", () => {
-    const repo = raw("acme/thing");
-    repo.recentClosedIssues.nodes.push(null);
-    expect(toMetrics(repo, [], NOW)).toMatchObject({
-      medianIssueCloseDays: 3,
-    });
   });
 
   it("treats an empty repository as having no commits", () => {
     expect(
-      toMetrics({ ...raw("acme/empty"), defaultBranchRef: null }, [], NOW),
+      toMetrics(
+        { ...raw("acme/empty"), defaultBranchRef: null },
+        [],
+        ACTIVITY,
+        NOW,
+      ),
     ).toMatchObject({
       lastCommitAt: null,
       commits90d: 0,
@@ -168,15 +174,27 @@ describe("buildQuery", () => {
   });
 });
 
-describe("fetchMetrics", () => {
+/** Both stages, as the explorer runs them for each repository. */
+async function fetchMetrics(
+  github: Parameters<typeof completeMetrics>[0],
+  repos: string[],
+  now: Date,
+): Promise<Map<string, MetricsResult>> {
+  const lookups = await lookUpRepositories(github, repos, now);
+  const results = new Map<string, MetricsResult>();
+  for (const [repo, lookup] of lookups)
+    results.set(repo, await completeMetrics(github, lookup, now));
+  return results;
+}
+
+describe("lookUpRepositories and completeMetrics", () => {
   it("records a null alias as missing", async () => {
     const github = {
       starHistory: async () => HISTORY,
-      graphql: async <T>() =>
-        ({
-          data: { r0: raw("a/one"), r1: null },
-          errors: [],
-        }) as unknown as GraphQLResponse<T>,
+      graphql: graphql(async () => ({
+        data: { r0: raw("a/one"), r1: null },
+        errors: [],
+      })),
     };
     const results = await fetchMetrics(github, ["a/one", "a/gone"], NOW);
     expect(results.get("a/one")?.status).toBe("found");
@@ -186,15 +204,15 @@ describe("fetchMetrics", () => {
   it("splits a batch GitHub answered only in part", async () => {
     const github = {
       starHistory: async () => HISTORY,
-      graphql: async <T>(query: string) => {
+      graphql: graphql(async (query) => {
         const partial = query.includes('"heavy"');
         return {
           data: { r0: partial ? null : raw("a/light"), r1: null },
           errors: partial
             ? [{ type: "RESOURCE_LIMITS_EXCEEDED", message: "too much" }]
             : [{ type: "NOT_FOUND", message: "gone" }],
-        } as unknown as GraphQLResponse<T>;
-      },
+        };
+      }),
     };
     const results = await fetchMetrics(github, ["a/light", "a/heavy"], NOW);
     expect(results.get("a/light")?.status).toBe("found");
@@ -208,15 +226,15 @@ describe("fetchMetrics", () => {
     let calls = 0;
     const github = {
       starHistory: async () => HISTORY,
-      graphql: async <T>(query: string) => {
+      graphql: graphql(async (query) => {
         calls++;
         if (query.includes('"bad"')) throw new GitHubError(502, "timeout");
         const count = query.match(/r\d+:/g)!.length;
         const data = Object.fromEntries(
           Array.from({ length: count }, (_, i) => [`r${i}`, raw(`a/${i}`)]),
         );
-        return { data, errors: [] } as unknown as GraphQLResponse<T>;
-      },
+        return { data, errors: [] };
+      }),
     };
     const results = await fetchMetrics(
       github,
@@ -247,11 +265,10 @@ describe("fetchMetrics", () => {
 
   it("fails only the repository whose star history GitHub refuses", async () => {
     const github = {
-      graphql: async <T>() =>
-        ({
-          data: { r0: raw("a/one"), r1: raw("a/two") },
-          errors: [],
-        }) as unknown as GraphQLResponse<T>,
+      graphql: graphql(async () => ({
+        data: { r0: raw("a/one"), r1: raw("a/two") },
+        errors: [],
+      })),
       starHistory: async (repo: string) => {
         if (repo === "a/two") throw new GitHubError(500, "boom");
         return HISTORY;
@@ -260,5 +277,30 @@ describe("fetchMetrics", () => {
     const results = await fetchMetrics(github, ["a/one", "a/two"], NOW);
     expect(results.get("a/one")?.status).toBe("found");
     expect(results.get("a/two")).toEqual({ status: "failed", reason: "boom" });
+  });
+
+  it("fails only the repository whose activity query GitHub refuses", async () => {
+    const github = {
+      starHistory: async () => HISTORY,
+      graphql: async <T>(query: string, variables: Record<string, unknown>) => {
+        if (query.includes("recentOpen")) {
+          if (variables.name === "two") throw new GitHubError(502, "timeout");
+          return {
+            data: ACTIVITY,
+            errors: [],
+          } as unknown as GraphQLResponse<T>;
+        }
+        return {
+          data: { r0: raw("a/one"), r1: raw("a/two") },
+          errors: [],
+        } as unknown as GraphQLResponse<T>;
+      },
+    };
+    const results = await fetchMetrics(github, ["a/one", "a/two"], NOW);
+    expect(results.get("a/one")?.status).toBe("found");
+    expect(results.get("a/two")).toEqual({
+      status: "failed",
+      reason: "timeout",
+    });
   });
 });

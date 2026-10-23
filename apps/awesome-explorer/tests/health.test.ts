@@ -12,20 +12,24 @@ function repo(overrides: Partial<RepoMetrics>): RepoMetrics {
     description: null,
     url: "https://github.com/acme/thing",
     archived: false,
+    fork: false,
     createdAt: daysAgo(2000),
     lastCommitAt: daysAgo(10),
     commits90d: 20,
+    committers90d: 6,
     stars: 5000,
     stars30d: 20,
     language: "TypeScript",
+    license: "MIT",
+    lastReleaseAt: daysAgo(30),
     issuesEnabled: true,
     openIssues: 50,
-    closedIssues: 950,
     openPullRequests: 5,
-    mergedPullRequests: 500,
-    issueBacklog: 0.05,
-    pullRequestBacklog: 0.01,
-    medianIssueCloseDays: 3,
+    oldOpenShare: 0.1,
+    backlog: 0.05,
+    medianHandleDays: 3,
+    unansweredShare: 0.1,
+    medianMergeDays: 2,
     ...overrides,
   };
 }
@@ -61,10 +65,7 @@ describe("assessHealth", () => {
   it("calls an established, maintained repository with a small backlog mature", () => {
     expect(assessHealth(repo({}), NOW).label).toBe("mature");
     expect(
-      assessHealth(
-        repo({ openIssues: 400, closedIssues: 600, issueBacklog: 0.4 }),
-        NOW,
-      ).label,
+      assessHealth(repo({ openIssues: 400, backlog: 0.4 }), NOW).label,
     ).toBe("active");
   });
 
@@ -72,13 +73,13 @@ describe("assessHealth", () => {
     expect(assessHealth(repo({ stars: 300 }), NOW).label).toBe("active");
   });
 
-  it("calls a lightly developed repository that fixes issues fast active", () => {
+  it("calls a lightly developed repository that handles issues fast active", () => {
     const light = { stars: 300, commits90d: 2 };
-    const fast = assessHealth(repo({ ...light, medianIssueCloseDays: 7 }), NOW);
+    const fast = assessHealth(repo({ ...light, medianHandleDays: 7 }), NOW);
     expect(fast).toMatchObject({ label: "active" });
-    expect(fast.reasons[0]).toContain("fixing issues fast");
+    expect(fast.reasons[0]).toContain("handling issues fast");
     expect(
-      assessHealth(repo({ ...light, medianIssueCloseDays: 8 }), NOW).label,
+      assessHealth(repo({ ...light, medianHandleDays: 8 }), NOW).label,
     ).toBe("stale");
   });
 
@@ -96,10 +97,9 @@ describe("assessHealth", () => {
     const neglected = assessHealth(
       repo({
         lastCommitAt: daysAgo(300),
-        medianIssueCloseDays: 90,
+        medianHandleDays: 90,
         openIssues: 900,
-        closedIssues: 100,
-        issueBacklog: 0.9,
+        backlog: 0.9,
       }),
       NOW,
     ).score;
