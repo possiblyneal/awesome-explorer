@@ -3,6 +3,7 @@
 // operator follows is fetched and merged into one ranking.
 
 import type { TrendingPeriod, TrendingRepo } from "../shared/types.ts";
+import { stripTags } from "./readme.ts";
 
 const PERIODS: Record<TrendingPeriod, number> = {
   daily: 1,
@@ -43,14 +44,14 @@ function count(text: string): number {
   return Number(text.replace(/,/g, ""));
 }
 
+/** Tags stripped, then entities decoded, `&amp;` last so `&amp;lt;` stays `&lt;`. */
 function decode(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, "")
-    .replace(/&amp;/g, "&")
+  return stripTags(html)
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
 }

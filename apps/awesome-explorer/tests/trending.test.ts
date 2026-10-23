@@ -7,7 +7,7 @@ function row(repo: string, gained: string, period = "this week"): string {
 <a data-hydro-click="{}" href="/${repo}" class="Link"><svg></svg>
 <span class="text-normal">${repo.split("/")[0]} /</span>${repo.split("/")[1]}</a></h2>
 <p class="col-9 color-fg-muted my-1 tmp-pr-4">
-Builds &amp; ships <b>things</b>.
+Builds &amp; ships <b>things</b> &amp;lt;3.
 </p>
 <div class="f6 color-fg-muted mt-2">
 <span itemprop="programmingLanguage">C++</span>
@@ -25,7 +25,7 @@ describe("parseTrending", () => {
     expect(parseTrending(row("juce-framework/JUCE", "1,081"))).toEqual([
       {
         repo: "juce-framework/JUCE",
-        description: "Builds & ships things.",
+        description: "Builds & ships things &lt;3.",
         language: "C++",
         stars: 9045,
         gained: 1081,

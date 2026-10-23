@@ -63,7 +63,7 @@ export function repoFromUrl(url: string): string | null {
 }
 
 /** Removes tags until none remain, so a removal cannot join two halves into a new tag. */
-function stripTags(html: string): string {
+export function stripTags(html: string): string {
   let text = html;
   let previous;
   do {
