@@ -107,6 +107,21 @@ export function starsLast30Days(history: StarWeek[], now: Date): number {
     .reduce((sum, stars) => sum + stars, 0);
 }
 
+/** Stars gained per day over the 7 whole UTC days before `now`'s day. */
+export function starsPerDayLastWeek(history: StarWeek[], now: Date): number {
+  const today = Math.floor(now.getTime() / DAY) * DAY;
+  const weekAgo = today - 7 * DAY;
+  const stars = history
+    .flatMap((week) =>
+      week.days.filter((_, day) => {
+        const start = week.week * 1000 + day * DAY;
+        return start >= weekAgo && start < today;
+      }),
+    )
+    .reduce((sum, count) => sum + count, 0);
+  return stars / 7;
+}
+
 export function toMetrics(
   raw: RawRepository,
   history: StarWeek[],

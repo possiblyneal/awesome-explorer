@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties, MouseEvent } from "react";
+import type { CSSProperties, MouseEvent, RefObject } from "react";
 import type { TrendingRepo } from "../shared/types.ts";
-import { fetchTrending, hideTrending, restoreTrending } from "./api.ts";
+import {
+  fetchTrending,
+  hideTrending,
+  restoreTrending,
+  translate,
+} from "./api.ts";
+import { mayNeedTranslation } from "../shared/translation.ts";
 import { compact } from "./format.ts";
 
 const PAGE = 48;
@@ -39,6 +45,33 @@ function RepoIcon() {
   );
 }
 
+/**
+ * `text` in English once the card it sits on (`card`) first comes on screen;
+ * the original until then, and for good if translation fails.
+ */
+function useEnglish(text: string | null, card: RefObject<HTMLElement | null>) {
+  // Keyed by its source, so a card whose description changes drops the old one.
+  const [english, setEnglish] = useState<{ source: string; text: string }>();
+  useEffect(() => {
+    const element = card.current;
+    if (!text || !element || !mayNeedTranslation(text)) return;
+    let live = true;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) return;
+      observer.disconnect();
+      translate(text)
+        .then((result) => live && setEnglish({ source: text, text: result }))
+        .catch(() => {});
+    });
+    observer.observe(element);
+    return () => {
+      live = false;
+      observer.disconnect();
+    };
+  }, [text, card]);
+  return english?.source === text ? english.text : text;
+}
+
 function TrendingCard({
   repo,
   onHide,
@@ -48,6 +81,8 @@ function TrendingCard({
 }) {
   const [owner, name] = repo.repo.split("/");
   const [imageBroken, setImageBroken] = useState(false);
+  const cardRef = useRef<HTMLAnchorElement>(null);
+  const description = useEnglish(repo.description, cardRef);
   const press = (action: HideAction) => (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -55,6 +90,7 @@ function TrendingCard({
   };
   return (
     <a
+      ref={cardRef}
       className="card"
       href={`https://github.com/${repo.repo}`}
       target="_blank"
@@ -93,7 +129,16 @@ function TrendingCard({
             <span className="muted">{owner} /</span> {name}
           </span>
         </h3>
-        <p className="card-description">{repo.description}</p>
+        <p
+          className="card-description"
+          title={
+            description !== repo.description
+              ? (repo.description ?? undefined)
+              : undefined
+          }
+        >
+          {description}
+        </p>
         <div className="card-footer">
           {repo.language && (
             <span className="card-language">
@@ -109,7 +154,9 @@ function TrendingCard({
             </span>
           )}
           <span title="Total stars">★ {compact(repo.stars)}</span>
-          <span title="Stars per day">↑{compact(repo.starsPerDay)}/day</span>
+          <span title="Stars per day over the last 7 days">
+            ↑{compact(repo.starsPerDay)}/day
+          </span>
           <span className="card-actions">
             <button
               className="card-button"

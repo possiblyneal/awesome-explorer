@@ -28,6 +28,14 @@ export function fetchTrending(): Promise<TrendingRepo[]> {
   return getJson("/api/trending");
 }
 
+/** `text` in English; unchanged when it already is or cannot be translated. */
+export async function translate(text: string): Promise<string> {
+  const body = await getJson<{ text: string }>(
+    `/api/translate?${new URLSearchParams({ q: text })}`,
+  );
+  return body.text;
+}
+
 /** Undoes a dismissal or snooze. */
 export async function restoreTrending(repo: string): Promise<void> {
   const response = await fetch(`/api/trending/${repo}`, { method: "DELETE" });

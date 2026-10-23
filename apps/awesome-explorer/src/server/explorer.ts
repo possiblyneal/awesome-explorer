@@ -17,11 +17,14 @@ import {
   BATCH_SIZE,
   fetchMetrics,
   repositoryLookups,
+  starsPerDayLastWeek,
   type MetricsResult,
 } from "./metrics.ts";
 import { countOutboundLinks, parseAwesomeList } from "./readme.ts";
 import type { Cached, Store } from "./store.ts";
 import { fetchTrending } from "./trending.ts";
+import { translateToEnglish } from "./translate.ts";
+import { mayNeedTranslation } from "../shared/translation.ts";
 
 const HOUR = 3_600_000;
 const FRESH_FOR = 24 * HOUR;
@@ -39,8 +42,27 @@ const README_CONCURRENCY = 10;
 const PREVIEW_BATCH_SIZE = 100;
 /** Longest trending waits on social previews before showing cards without them. */
 const PREVIEW_TIMEOUT = 15_000;
+/** Star history weeks a 7-day rate needs: on a Sunday all 7 days are last week's. */
+const RATE_WEEKS = 2;
+/** A rate also expires at UTC midnight, so one ranking never mixes two 7-day windows. */
+const RATE_FRESH_FOR = 6 * HOUR;
+/** Star history requests in flight at once; 480 repositories take about 30s. */
+const RATE_CONCURRENCY = 8;
+/** Longest trending waits on star histories before ranking with what it has. */
+const RATE_TIMEOUT = 60_000;
+const TRANSLATION_FRESH_FOR = 7 * 24 * HOUR;
 
 export class NotFoundError extends Error {}
+
+/** Waits for `work`, but no longer than `ms`. */
+async function atMost(work: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    work,
+    new Promise((resolve) => (timer = setTimeout(resolve, ms))),
+  ]);
+  clearTimeout(timer);
+}
 
 function isFresh(cached: Cached<MetricsResult>, now: number): boolean {
   const ttl = cached.value.status === "failed" ? FAILED_FRESH_FOR : FRESH_FOR;
@@ -69,6 +91,10 @@ function explore(
   }
 }
 
+function utcDay(time: number): number {
+  return Math.floor(time / (24 * HOUR));
+}
+
 export class Explorer {
   #github: GitHub;
   #store: Store;
@@ -84,15 +110,22 @@ export class Explorer {
 
   #trending: { at: number; repos: Promise<TrendingRepo[]> } | undefined;
   #fetchTrending: typeof fetchTrending;
+  /** Lowercased name to stars per day over the last 7 days. */
+  #starRates = new Map<string, { at: number; rate: number }>();
+  #translate: typeof translateToEnglish;
+  /** Source text to its translation in flight, so a card scrolled past twice asks once. */
+  #translations = new Map<string, Promise<string>>();
 
   constructor(
     github: GitHub,
     store: Store,
     trending: typeof fetchTrending = fetchTrending,
+    translate: typeof translateToEnglish = translateToEnglish,
   ) {
     this.#github = github;
     this.#store = store;
     this.#fetchTrending = trending;
+    this.#translate = translate;
   }
 
   list(repo: string): Promise<ListView> {
@@ -110,9 +143,13 @@ export class Explorer {
       !this.#trending ||
       Date.now() - this.#trending.at >= TRENDING_FRESH_FOR
     ) {
-      const repos = this.#fetchTrending().then((found) =>
-        this.#withPreviews(found),
-      );
+      const repos = this.#fetchTrending().then(async (found) => {
+        const [withImages] = await Promise.all([
+          this.#withPreviews(found),
+          atMost(this.#lookUpStarRates(found), RATE_TIMEOUT),
+        ]);
+        return this.#rankByStarRate(withImages);
+      });
       this.#trending = { at: Date.now(), repos };
       repos.catch(() => (this.#trending = undefined));
     }
@@ -133,12 +170,7 @@ export class Explorer {
    */
   async #withPreviews(repos: TrendingRepo[]): Promise<TrendingRepo[]> {
     const images = new Map<string, string>();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      this.#lookUpPreviews(repos, images),
-      new Promise((resolve) => (timer = setTimeout(resolve, PREVIEW_TIMEOUT))),
-    ]);
-    clearTimeout(timer);
+    await atMost(this.#lookUpPreviews(repos, images), PREVIEW_TIMEOUT);
     return repos.map((repo) => ({
       ...repo,
       image: images.get(repo.repo) ?? null,
@@ -180,6 +212,92 @@ export class Explorer {
         }
       }),
     );
+  }
+
+  /**
+   * Each repository's stars per day over the last 7 days, from its star
+   * history, refetched when 6 hours old or from a past UTC day. A failed or
+   * missing history leaves the repository uncached, and a rate limit stops
+   * the lookups still to come.
+   */
+  async #lookUpStarRates(repos: TrendingRepo[]): Promise<void> {
+    const now = Date.now();
+    for (const [key, cached] of this.#starRates)
+      if (
+        now - cached.at >= RATE_FRESH_FOR ||
+        utcDay(cached.at) !== utcDay(now)
+      )
+        this.#starRates.delete(key);
+    const stale = repos.filter(
+      (repo) => !this.#starRates.has(repo.repo.toLowerCase()),
+    );
+    for (let start = 0; start < stale.length; start += RATE_CONCURRENCY) {
+      try {
+        await Promise.all(
+          stale.slice(start, start + RATE_CONCURRENCY).map(async (repo) => {
+            try {
+              const history = await this.#github.starHistory(
+                repo.repo,
+                RATE_WEEKS,
+              );
+              if (history)
+                this.#starRates.set(repo.repo.toLowerCase(), {
+                  at: Date.now(),
+                  rate: starsPerDayLastWeek(history, new Date()),
+                });
+            } catch (error) {
+              if (error instanceof RateLimitError) throw error;
+            }
+          }),
+        );
+      } catch {
+        return;
+      }
+    }
+  }
+
+  /**
+   * Ranks by the 7-day rate. A repository without one falls back to the
+   * trending page's weekly or monthly gain per day, which smooth a burst as
+   * the 7-day rate does, and only then to its best period.
+   */
+  #rankByStarRate(repos: TrendingRepo[]): TrendingRepo[] {
+    return repos
+      .map((repo) => ({
+        ...repo,
+        starsPerDay:
+          this.#starRates.get(repo.repo.toLowerCase())?.rate ??
+          (repo.gained.weekly !== undefined
+            ? repo.gained.weekly / 7
+            : repo.gained.monthly !== undefined
+              ? repo.gained.monthly / 30
+              : repo.starsPerDay),
+      }))
+      .sort((a, b) => b.starsPerDay - a.starsPerDay);
+  }
+
+  /**
+   * `text` in English, cached a week. Text with no letter outside A–Z is
+   * taken as English unasked; a failed translation answers the stale cached
+   * one, else the original, and is asked again next time.
+   */
+  async english(text: string): Promise<string> {
+    if (!mayNeedTranslation(text)) return text;
+    const cached = this.#store.getTranslation(text);
+    if (cached && Date.now() - cached.fetchedAt < TRANSLATION_FRESH_FOR)
+      return cached.value;
+    let pending = this.#translations.get(text);
+    if (!pending) {
+      pending = this.#translate(text)
+        .then((english) => {
+          this.#store.putTranslation(text, english, Date.now());
+          return english;
+        })
+        .catch(() => cached?.value ?? text)
+        .finally(() => this.#translations.delete(text));
+      this.#translations.set(text, pending);
+    }
+    return pending;
   }
 
   /** Hides a repository from trending for good. */

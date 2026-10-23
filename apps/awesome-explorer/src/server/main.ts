@@ -6,6 +6,8 @@ import { loadConfig } from "./config.ts";
 import { Explorer, NotFoundError } from "./explorer.ts";
 import { GitHub, RateLimitError } from "./github.ts";
 import { Store } from "./store.ts";
+import { fetchTrending } from "./trending.ts";
+import { translateToEnglish } from "./translate.ts";
 
 const NAME = /^[\w.-]+$/;
 const unitRoot = `${import.meta.dirname}/../..`;
@@ -14,6 +16,8 @@ const config = await loadConfig();
 const explorer = new Explorer(
   new GitHub(config.githubToken),
   new Store(config.databasePath),
+  fetchTrending,
+  (text) => translateToEnglish(text, config.translationEmail),
 );
 const app = express();
 
@@ -57,6 +61,15 @@ app.delete("/api/trending/:owner/:name", (req, res) => {
   }
   explorer.restore(`${owner}/${name}`);
   res.status(204).end();
+});
+
+app.get("/api/translate", async (req, res) => {
+  const text = typeof req.query.q === "string" ? req.query.q : "";
+  if (!text || text.length > 1000) {
+    res.status(400).json({ error: "expected text of 1 to 1000 characters" });
+    return;
+  }
+  res.json({ text: await explorer.english(text) });
 });
 
 app.get("/api/discover", async (req, res) => {
