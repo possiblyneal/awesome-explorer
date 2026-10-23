@@ -50,7 +50,8 @@ function RepoIcon() {
  * the original until then, and for good if translation fails.
  */
 function useEnglish(text: string | null, card: RefObject<HTMLElement | null>) {
-  const [english, setEnglish] = useState<string>();
+  // Keyed by its source, so a card whose description changes drops the old one.
+  const [english, setEnglish] = useState<{ source: string; text: string }>();
   useEffect(() => {
     const element = card.current;
     if (!text || !element || !mayNeedTranslation(text)) return;
@@ -59,7 +60,7 @@ function useEnglish(text: string | null, card: RefObject<HTMLElement | null>) {
       if (!entry?.isIntersecting) return;
       observer.disconnect();
       translate(text)
-        .then((result) => live && setEnglish(result))
+        .then((result) => live && setEnglish({ source: text, text: result }))
         .catch(() => {});
     });
     observer.observe(element);
@@ -68,7 +69,7 @@ function useEnglish(text: string | null, card: RefObject<HTMLElement | null>) {
       observer.disconnect();
     };
   }, [text, card]);
-  return english ?? text;
+  return english?.source === text ? english.text : text;
 }
 
 function TrendingCard({

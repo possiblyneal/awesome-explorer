@@ -44,6 +44,7 @@ const PREVIEW_BATCH_SIZE = 100;
 const PREVIEW_TIMEOUT = 15_000;
 /** Star history weeks a 7-day rate needs: on a Sunday all 7 days are last week's. */
 const RATE_WEEKS = 2;
+/** A rate also expires at UTC midnight, so one ranking never mixes two 7-day windows. */
 const RATE_FRESH_FOR = 6 * HOUR;
 /** Star history requests in flight at once; 480 repositories take about 30s. */
 const RATE_CONCURRENCY = 8;
@@ -88,6 +89,10 @@ function explore(
     default:
       return entry;
   }
+}
+
+function utcDay(time: number): number {
+  return Math.floor(time / (24 * HOUR));
 }
 
 export class Explorer {
@@ -211,13 +216,17 @@ export class Explorer {
 
   /**
    * Each repository's stars per day over the last 7 days, from its star
-   * history, refetched when 6 hours old. A failed or missing history leaves
+   * history, refetched when 6 hours old or from a past UTC day. A failed or missing history leaves
    * the repository uncached, and a rate limit stops the lookups still to come.
    */
   async #lookUpStarRates(repos: TrendingRepo[]): Promise<void> {
     const now = Date.now();
     for (const [key, cached] of this.#starRates)
-      if (now - cached.at >= RATE_FRESH_FOR) this.#starRates.delete(key);
+      if (
+        now - cached.at >= RATE_FRESH_FOR ||
+        utcDay(cached.at) !== utcDay(now)
+      )
+        this.#starRates.delete(key);
     const stale = repos.filter(
       (repo) => !this.#starRates.has(repo.repo.toLowerCase()),
     );
@@ -246,22 +255,30 @@ export class Explorer {
     }
   }
 
-  /** Ranks by the 7-day rate; a repository without one keeps the trending page's. */
+  /**
+   * Ranks by the 7-day rate. A repository without one falls back to the
+   * trending page's weekly or monthly gain per day, which smooth a burst as
+   * the 7-day rate does, and only then to its best period.
+   */
   #rankByStarRate(repos: TrendingRepo[]): TrendingRepo[] {
     return repos
       .map((repo) => ({
         ...repo,
         starsPerDay:
           this.#starRates.get(repo.repo.toLowerCase())?.rate ??
-          repo.starsPerDay,
+          (repo.gained.weekly !== undefined
+            ? repo.gained.weekly / 7
+            : repo.gained.monthly !== undefined
+              ? repo.gained.monthly / 30
+              : repo.starsPerDay),
       }))
       .sort((a, b) => b.starsPerDay - a.starsPerDay);
   }
 
   /**
    * `text` in English, cached a week. Text with no letter outside A–Z is
-   * taken as English unasked; a failed translation answers the original and
-   * is asked again next time.
+   * taken as English unasked; a failed translation answers the stale cached
+   * one, else the original, and is asked again next time.
    */
   async english(text: string): Promise<string> {
     if (!mayNeedTranslation(text)) return text;

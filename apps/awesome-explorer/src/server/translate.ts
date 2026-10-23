@@ -23,8 +23,11 @@ export async function translateToEnglish(
     responseStatus: number | string;
     responseDetails: string;
     responseData: { translatedText: string };
+    quotaFinished?: boolean;
   };
   if (/distinct languages/i.test(body.responseDetails)) return text;
+  // Out of quota, MyMemory may still answer 200 with a warning as the text.
+  if (body.quotaFinished) throw new Error("MyMemory: daily quota used up");
   if (Number(body.responseStatus) !== 200)
     throw new Error(`MyMemory: ${body.responseStatus} ${body.responseDetails}`);
   return body.responseData.translatedText;

@@ -6,6 +6,7 @@ import { loadConfig } from "./config.ts";
 import { Explorer, NotFoundError } from "./explorer.ts";
 import { GitHub, RateLimitError } from "./github.ts";
 import { Store } from "./store.ts";
+import { fetchTrending } from "./trending.ts";
 import { translateToEnglish } from "./translate.ts";
 
 const NAME = /^[\w.-]+$/;
@@ -15,7 +16,7 @@ const config = await loadConfig();
 const explorer = new Explorer(
   new GitHub(config.githubToken),
   new Store(config.databasePath),
-  undefined,
+  fetchTrending,
   (text) => translateToEnglish(text, config.translationEmail),
 );
 const app = express();

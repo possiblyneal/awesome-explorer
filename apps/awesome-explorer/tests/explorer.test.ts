@@ -210,7 +210,7 @@ describe("Explorer.trending", () => {
     ]);
   });
 
-  it("ranks by stars per day over the last 7 days, else the trending page's rate", async () => {
+  it("ranks by stars per day over the last 7 days, else the trending page's weekly, monthly or best rate", async () => {
     vi.useFakeTimers({
       now: new Date("2026-10-23T12:00:00Z"),
       toFake: ["Date"],
@@ -230,14 +230,16 @@ describe("Explorer.trending", () => {
         "acme/broken": async () => {
           throw new Error("502");
         },
+        "acme/new": async () => null,
       };
       const subject = explorer(
         [],
         [
           trend("acme/burst", 900),
-          trend("acme/gone", 30),
-          trend("acme/broken", 20),
+          { ...trend("acme/gone", 900), gained: { daily: 900, weekly: 280 } },
+          { ...trend("acme/broken", 900), gained: { monthly: 600 } },
           trend("acme/steady", 10),
+          trend("acme/new", 30),
         ],
         undefined,
         (repo) => histories[repo]!(),
@@ -246,10 +248,36 @@ describe("Explorer.trending", () => {
         (await subject.trending()).map((r) => [r.repo, r.starsPerDay]),
       ).toEqual([
         ["acme/steady", 50],
-        ["acme/gone", 30],
+        ["acme/gone", 40],
+        ["acme/new", 30],
         ["acme/broken", 20],
         ["acme/burst", 5],
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refetches a star rate at UTC midnight so one ranking keeps one window", async () => {
+    vi.useFakeTimers({
+      now: new Date("2026-10-23T23:00:00Z"),
+      toFake: ["Date"],
+    });
+    try {
+      let asked = 0;
+      const subject = explorer(
+        [],
+        [trend("acme/new", 1)],
+        undefined,
+        async () => {
+          asked++;
+          return [];
+        },
+      );
+      await subject.trending();
+      vi.setSystemTime(new Date("2026-10-24T00:30:00Z"));
+      await subject.trending();
+      expect(asked).toBe(2);
     } finally {
       vi.useRealTimers();
     }

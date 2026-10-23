@@ -1,8 +1,9 @@
 // The SQLite cache under the unit's state/ folder: each list's parsed entries,
 // each repository's last metrics result, and each discovery candidate's README
 // link count, all keyed by lowercased `owner/name`, and English translations
-// keyed by their source text, each stamped with when it was fetched. It also keeps the operator's trending dismissals, the one
-// thing here that a refetch cannot rebuild.
+// keyed by their source text, each stamped with when it was fetched. It also
+// keeps the operator's trending dismissals, the one thing here that a refetch
+// cannot rebuild.
 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";

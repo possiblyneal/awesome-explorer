@@ -83,7 +83,8 @@ export interface TrendingRepo {
   gained: Partial<Record<TrendingPeriod, number>>;
   /**
    * Stars per day over the last 7 whole days, from the star history; without
-   * one, the best of `gained` per day. Trending is ranked by it.
+   * one, `gained` per day over the week, else the month, else the best period.
+   * Trending is ranked by it.
    */
   starsPerDay: number;
   /** The uploaded social preview's URL; null when the repository has none. */
