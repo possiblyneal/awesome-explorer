@@ -9,6 +9,7 @@ import {
   fetchMetrics,
   toMetrics,
   starsLast30Days,
+  starsPerDayLastWeek,
   type RawRepository,
 } from "../src/server/metrics.ts";
 
@@ -81,6 +82,29 @@ describe("starsLast30Days", () => {
     // 30 days back from Sunday noon reaches 2026-09-04 noon, so the days from
     // 09-05 through 10-04 count; five weeks would stop at 09-06.
     expect(starsLast30Days(history, sunday)).toBe(30);
+  });
+});
+
+describe("starsPerDayLastWeek", () => {
+  it("averages the 7 whole days before today, across the week boundary", () => {
+    // A Wednesday afternoon; its week began on Sunday 2026-10-18.
+    const wednesday = new Date("2026-10-21T15:00:00Z");
+    const history: StarWeek[] = [
+      {
+        week: Date.parse("2026-10-18") / 1000,
+        total: 1300,
+        days: [100, 100, 100, 1000, 0, 0, 0],
+      },
+      {
+        week: Date.parse("2026-10-11") / 1000,
+        total: 28,
+        days: [1, 2, 3, 4, 5, 6, 7],
+      },
+    ];
+    // Wednesday 10-14 through Tuesday 10-20; today's partial 1000 is left out.
+    expect(starsPerDayLastWeek(history, wednesday)).toBe(
+      (4 + 5 + 6 + 7 + 300) / 7,
+    );
   });
 });
 

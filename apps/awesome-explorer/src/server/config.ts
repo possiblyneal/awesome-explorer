@@ -7,6 +7,8 @@ export interface Config {
   production: boolean;
   githubToken: string;
   databasePath: string;
+  /** Sent to MyMemory, which raises its daily quota from 5,000 to 50,000 characters for it. */
+  translationEmail: string | undefined;
 }
 
 /** The token GitHub CLI is signed in with, so a machine with `gh` needs no extra setup. */
@@ -32,5 +34,6 @@ export async function loadConfig(): Promise<Config> {
     production: process.env.NODE_ENV === "production",
     githubToken,
     databasePath: `${import.meta.dirname}/../../state/cache.db`,
+    translationEmail: process.env.MYMEMORY_EMAIL || undefined,
   };
 }

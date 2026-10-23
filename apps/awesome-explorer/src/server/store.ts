@@ -1,7 +1,7 @@
 // The SQLite cache under the unit's state/ folder: each list's parsed entries,
 // each repository's last metrics result, and each discovery candidate's README
-// link count, all keyed by lowercased `owner/name` and stamped with when they
-// were fetched. It also keeps the operator's trending dismissals, the one
+// link count, all keyed by lowercased `owner/name`, and English translations
+// keyed by their source text, each stamped with when it was fetched. It also keeps the operator's trending dismissals, the one
 // thing here that a refetch cannot rebuild.
 
 import { mkdirSync } from "node:fs";
@@ -26,6 +26,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS metrics (repo TEXT PRIMARY KEY, result TEXT NOT NULL, fetched_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS readme_links (repo TEXT PRIMARY KEY, links INTEGER NOT NULL, fetched_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS dismissals (repo TEXT PRIMARY KEY, until INTEGER);
+      CREATE TABLE IF NOT EXISTS translations (source TEXT PRIMARY KEY, english TEXT NOT NULL, fetched_at INTEGER NOT NULL);
     `);
   }
 
@@ -91,6 +92,21 @@ export class Store {
         "INSERT OR REPLACE INTO readme_links (repo, links, fetched_at) VALUES (?, ?, ?)",
       )
       .run(key, links, fetchedAt);
+  }
+
+  getTranslation(source: string): Cached<string> | undefined {
+    const row = this.#db
+      .prepare("SELECT english, fetched_at FROM translations WHERE source = ?")
+      .get(source) as { english: string; fetched_at: number } | undefined;
+    return row && { value: row.english, fetchedAt: row.fetched_at };
+  }
+
+  putTranslation(source: string, english: string, fetchedAt: number): void {
+    this.#db
+      .prepare(
+        "INSERT OR REPLACE INTO translations (source, english, fetched_at) VALUES (?, ?, ?)",
+      )
+      .run(source, english, fetchedAt);
   }
 
   /** Hides a repository from trending until `until`, or for good when null. */

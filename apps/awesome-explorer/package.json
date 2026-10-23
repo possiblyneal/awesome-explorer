@@ -7,12 +7,12 @@
   },
   "scripts": {
     "build": "vite build",
-    "dev": "node --disable-warning=ExperimentalWarning --watch src/server/main.ts",
+    "dev": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning --watch src/server/main.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
-    "start": "NODE_ENV=production node --disable-warning=ExperimentalWarning src/server/main.ts",
+    "start": "NODE_ENV=production node --env-file-if-exists=.env --disable-warning=ExperimentalWarning src/server/main.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

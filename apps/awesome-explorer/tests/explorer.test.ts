@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { Explorer } from "../src/server/explorer.ts";
-import type { GitHub, SearchItem } from "../src/server/github.ts";
+import {
+  RateLimitError,
+  type GitHub,
+  type SearchItem,
+  type StarWeek,
+} from "../src/server/github.ts";
 import { Store } from "../src/server/store.ts";
 import type { TrendingRepo } from "../src/shared/types.ts";
 import { INDEX_LIST, STARS_LIST } from "../src/shared/index-list.ts";
@@ -49,6 +54,7 @@ function explorer(
     data: {},
     errors: [],
   }),
+  starHistory: (repo: string) => Promise<StarWeek[] | null> = async () => [],
 ): Explorer {
   const github = {
     readme: async (repo: string) => {
@@ -63,7 +69,7 @@ function explorer(
       query.includes("openGraphImageUrl")
         ? preview(query)
         : new Promise(() => {}),
-    starHistory: async () => [],
+    starHistory,
   };
   return new Explorer(
     github as unknown as GitHub,
@@ -204,6 +210,62 @@ describe("Explorer.trending", () => {
     ]);
   });
 
+  it("ranks by stars per day over the last 7 days, else the trending page's rate", async () => {
+    vi.useFakeTimers({
+      now: new Date("2026-10-23T12:00:00Z"),
+      toFake: ["Date"],
+    });
+    try {
+      // Two flat weeks, so any 7-day window averages `perDay`.
+      const flat = (perDay: number): StarWeek[] =>
+        ["2026-10-18", "2026-10-11"].map((week) => ({
+          week: Date.parse(week) / 1000,
+          total: perDay * 7,
+          days: Array(7).fill(perDay),
+        }));
+      const histories: Record<string, () => Promise<StarWeek[] | null>> = {
+        "acme/burst": async () => flat(5),
+        "acme/steady": async () => flat(50),
+        "acme/gone": async () => null,
+        "acme/broken": async () => {
+          throw new Error("502");
+        },
+      };
+      const subject = explorer(
+        [],
+        [
+          trend("acme/burst", 900),
+          trend("acme/gone", 30),
+          trend("acme/broken", 20),
+          trend("acme/steady", 10),
+        ],
+        undefined,
+        (repo) => histories[repo]!(),
+      );
+      expect(
+        (await subject.trending()).map((r) => [r.repo, r.starsPerDay]),
+      ).toEqual([
+        ["acme/steady", 50],
+        ["acme/gone", 30],
+        ["acme/broken", 20],
+        ["acme/burst", 5],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops looking up star histories at a rate limit", async () => {
+    const asked: string[] = [];
+    const repos = Array.from({ length: 9 }, (_, i) => trend(`acme/r${i}`, 1));
+    await explorer([], repos, undefined, async (repo) => {
+      asked.push(repo);
+      if (repo === "acme/r0") throw new RateLimitError(new Date());
+      return [];
+    }).trending();
+    expect(asked).toHaveLength(8);
+  });
+
   it.each(["dismiss", "snooze"] as const)(
     "shows a repository again after restoring it from %s",
     async (action) => {
@@ -216,4 +278,44 @@ describe("Explorer.trending", () => {
       ]);
     },
   );
+});
+
+describe("Explorer.english", () => {
+  function translating(translate: (text: string) => Promise<string>) {
+    return new Explorer(
+      {} as GitHub,
+      new Store(":memory:"),
+      async () => [],
+      translate,
+    );
+  }
+
+  it("translates other languages once and leaves plain English unasked", async () => {
+    const asked: string[] = [];
+    const subject = translating(async (text) => {
+      asked.push(text);
+      return "Set up a video site in one minute";
+    });
+    expect(await subject.english("The open source coding agent.")).toBe(
+      "The open source coding agent.",
+    );
+    expect(await subject.english("一分钟搭建影视站")).toBe(
+      "Set up a video site in one minute",
+    );
+    await subject.english("一分钟搭建影视站");
+    expect(asked).toEqual(["一分钟搭建影视站"]);
+  });
+
+  it("answers the original when translation fails, and asks again next time", async () => {
+    let calls = 0;
+    const subject = translating(async () => {
+      calls++;
+      throw new Error("quota");
+    });
+    expect(await subject.english("Ferramenta de código")).toBe(
+      "Ferramenta de código",
+    );
+    await subject.english("Ferramenta de código");
+    expect(calls).toBe(2);
+  });
 });
