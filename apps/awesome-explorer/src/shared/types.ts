@@ -8,24 +8,33 @@ export interface RepoMetrics {
   description: string | null;
   url: string;
   archived: boolean;
+  fork: boolean;
   createdAt: string;
   lastCommitAt: string | null;
   commits90d: number;
+  /** Distinct commit authors in 90 days, among the newest 100 commits. */
+  committers90d: number;
   stars: number;
   /** Stars gained in the last 30 days. */
   stars30d: number;
   language: string | null;
+  /** SPDX identifier; null when there is none or GitHub cannot tell. */
+  license: string | null;
+  lastReleaseAt: string | null;
   issuesEnabled: boolean;
   openIssues: number;
-  closedIssues: number;
   openPullRequests: number;
-  mergedPullRequests: number;
-  /** Share of all issues ever opened that are still open; null with issues off or none filed. */
-  issueBacklog: number | null;
-  /** Share of open and merged pull requests still open; null when there has been none. */
-  pullRequestBacklog: number | null;
-  /** Median days from opening to closing, over the 20 most recently updated closed issues. */
-  medianIssueCloseDays: number | null;
+  /** Share of open issues and pull requests opened over a year ago; null with none open. */
+  oldOpenShare: number | null;
+  // Over issues and pull requests opened 2 weeks to a year ago; see GLOSSARY.md
+  // for Handled. Null when there are too few to say.
+  /** Share not handled. */
+  backlog: number | null;
+  /** Median days to handle, an unhandled one counted at its age so far. */
+  medianHandleDays: number | null;
+  /** Share of outside contributors' issues with no maintainer reply and not handled. */
+  unansweredShare: number | null;
+  medianMergeDays: number | null;
 }
 
 export interface Health {
@@ -41,6 +50,8 @@ export interface ListEntry {
   name: string;
   section: string;
   description: string;
+  /** Star lists holding the repository; only starred entries have them. */
+  lists?: string[];
 }
 
 export interface ExploredEntry extends ListEntry {

@@ -5,9 +5,16 @@
 // returns 200, with RESOURCE_LIMITS_EXCEEDED errors and the fields it gave up
 // on nulled. So a batch with such an error, or one that fails outright, is
 // split in half until the repository that fails it stands alone. Recent
-// stars come from the REST star history, one request per repository found.
+// stars come from the REST star history and backlog and response numbers from
+// `activity.ts`, one request each per repository found, made by
+// `completeMetrics` so a caller can finish each repository on its own.
 
 import type { RepoMetrics } from "../shared/types.ts";
+import {
+  fetchActivity,
+  summarizeActivity,
+  type RawActivity,
+} from "./activity.ts";
 import { GitHubError, type GitHub, type StarWeek } from "./github.ts";
 
 // GitHub spends about 0.4s per repository on this query whatever the batch
@@ -32,6 +39,7 @@ export interface RawRepository {
   description: string | null;
   url: string;
   isArchived: boolean;
+  isFork: boolean;
   createdAt: string;
   stargazerCount: number;
   hasIssuesEnabled: boolean;
@@ -39,28 +47,22 @@ export interface RawRepository {
   defaultBranchRef: {
     target: { committedDate?: string; history?: Count } | null;
   } | null;
+  latestRelease: { publishedAt: string | null } | null;
+  licenseInfo: { spdxId: string | null } | null;
   openIssues: Count;
-  closedIssues: Count;
-  recentClosedIssues: {
-    nodes: ({ createdAt: string; closedAt: string | null } | null)[];
-  };
   openPullRequests: Count;
-  mergedPullRequests: Count;
 }
 
 const FRAGMENT = `
 fragment Metrics on Repository {
-  nameWithOwner description url isArchived createdAt
+  nameWithOwner description url isArchived isFork createdAt
   stargazerCount hasIssuesEnabled
   primaryLanguage { name }
+  latestRelease { publishedAt }
+  licenseInfo { spdxId }
   defaultBranchRef { target { ... on Commit { committedDate history(since: $since) { totalCount } } } }
   openIssues: issues(states: OPEN) { totalCount }
-  closedIssues: issues(states: CLOSED) { totalCount }
-  recentClosedIssues: issues(states: CLOSED, first: 20, orderBy: { field: UPDATED_AT, direction: DESC }) {
-    nodes { createdAt closedAt }
-  }
   openPullRequests: pullRequests(states: OPEN) { totalCount }
-  mergedPullRequests: pullRequests(states: MERGED) { totalCount }
 }`;
 
 /** One aliased `repository` lookup per name, selecting `selection`: r0, r1, … in the order given. */
@@ -75,26 +77,6 @@ export function repositoryLookups(repos: string[], selection: string): string {
 
 export function buildQuery(repos: string[]): string {
   return `query($since: GitTimestamp!) {\n${repositoryLookups(repos, "{ ...Metrics }")}\n}\n${FRAGMENT}`;
-}
-
-function median(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  const value =
-    sorted.length % 2
-      ? sorted[middle]!
-      : (sorted[middle - 1]! + sorted[middle]!) / 2;
-  return Math.round(value * 10) / 10;
-}
-
-/** Share of a backlog still open, or null when there has never been one. */
-function backlog(open: number, done: number): number | null {
-  return open + done === 0 ? null : open / (open + done);
-}
-
-function daysBetween(start: string, end: string | null): number[] {
-  return end ? [(Date.parse(end) - Date.parse(start)) / DAY] : [];
 }
 
 /** Stars gained on the days starting within 30 days before `now`. */
@@ -125,14 +107,19 @@ export function starsPerDayLastWeek(history: StarWeek[], now: Date): number {
 export function toMetrics(
   raw: RawRepository,
   history: StarWeek[],
+  activity: RawActivity,
   now: Date,
 ): RepoMetrics {
   const head = raw.defaultBranchRef?.target;
+  const openIssues = raw.openIssues.totalCount;
+  const openPullRequests = raw.openPullRequests.totalCount;
+  const license = raw.licenseInfo?.spdxId;
   return {
     repo: raw.nameWithOwner,
     description: raw.description,
     url: raw.url,
     archived: raw.isArchived,
+    fork: raw.isFork,
     createdAt: raw.createdAt,
     lastCommitAt: head?.committedDate ?? null,
     commits90d: head?.history?.totalCount ?? 0,
@@ -140,45 +127,45 @@ export function toMetrics(
     stars30d: starsLast30Days(history, now),
     language: raw.primaryLanguage?.name ?? null,
     issuesEnabled: raw.hasIssuesEnabled,
-    openIssues: raw.openIssues.totalCount,
-    closedIssues: raw.closedIssues.totalCount,
-    openPullRequests: raw.openPullRequests.totalCount,
-    mergedPullRequests: raw.mergedPullRequests.totalCount,
-    issueBacklog: raw.hasIssuesEnabled
-      ? backlog(raw.openIssues.totalCount, raw.closedIssues.totalCount)
-      : null,
-    pullRequestBacklog: backlog(
-      raw.openPullRequests.totalCount,
-      raw.mergedPullRequests.totalCount,
-    ),
-    medianIssueCloseDays: median(
-      raw.recentClosedIssues.nodes.flatMap((issue) =>
-        issue ? daysBetween(issue.createdAt, issue.closedAt) : [],
-      ),
-    ),
+    openIssues,
+    openPullRequests,
+    lastReleaseAt: raw.latestRelease?.publishedAt ?? null,
+    // GitHub answers NOASSERTION for a license file it cannot identify.
+    license: license && license !== "NOASSERTION" ? license : null,
+    ...summarizeActivity(activity, openIssues + openPullRequests, now),
   };
 }
+
+/** A repository's batch lookup: its raw fields, or the final result when there are none. */
+export type Lookup =
+  | { status: "found"; raw: RawRepository }
+  | Exclude<MetricsResult, { status: "found" }>;
 
 // GitHub nulls a node it will not show (a deleted author, a hidden issue)
 // rather than failing the query, so data of an unexpected shape fails only the
 // repository it belongs to instead of stalling every batch behind it. So does a
-// star history GitHub refuses.
-async function toResult(
-  github: Pick<GitHub, "starHistory">,
-  raw: RawRepository | null | undefined,
+// star history or activity query GitHub refuses.
+/** Finishes a looked-up repository with its star history and activity. */
+export async function completeMetrics(
+  github: Pick<GitHub, "graphql" | "starHistory">,
+  lookup: Lookup,
   now: Date,
 ): Promise<MetricsResult> {
-  if (!raw) return { status: "missing" };
+  if (lookup.status !== "found") return lookup;
+  const { raw } = lookup;
   let history: StarWeek[];
+  let activity: RawActivity;
   try {
-    history =
-      (await github.starHistory(raw.nameWithOwner, HISTORY_WEEKS)) ?? [];
+    [history, activity] = await Promise.all([
+      github.starHistory(raw.nameWithOwner, HISTORY_WEEKS).then((h) => h ?? []),
+      fetchActivity(github, raw.nameWithOwner, now),
+    ]);
   } catch (error) {
     if (!(error instanceof GitHubError)) throw error;
     return { status: "failed", reason: error.message };
   }
   try {
-    return { status: "found", metrics: toMetrics(raw, history, now) };
+    return { status: "found", metrics: toMetrics(raw, history, activity, now) };
   } catch (error) {
     return {
       status: "failed",
@@ -188,27 +175,27 @@ async function toResult(
 }
 
 /**
- * Metrics for each repository, keyed by the name as given. Rate limits and
+ * Each repository's batch lookup, keyed by the name as given. Rate limits and
  * network failures propagate, since every repository would fail the same way;
  * a request GitHub refuses is narrowed to the repository causing it. A server
  * error that every repository in the batch then fails too is GitHub being
  * down rather than refusing one query, so it propagates as well.
  */
-export async function fetchMetrics(
-  github: Pick<GitHub, "graphql" | "starHistory">,
+export function lookUpRepositories(
+  github: Pick<GitHub, "graphql">,
   repos: string[],
   now: Date,
-): Promise<Map<string, MetricsResult>> {
-  return fetchSplitting(github, repos, now, true);
+): Promise<Map<string, Lookup>> {
+  return lookUpSplitting(github, repos, now, true);
 }
 
-async function fetchSplitting(
-  github: Pick<GitHub, "graphql" | "starHistory">,
+async function lookUpSplitting(
+  github: Pick<GitHub, "graphql">,
   repos: string[],
   now: Date,
   whole: boolean,
-): Promise<Map<string, MetricsResult>> {
-  const results = new Map<string, MetricsResult>();
+): Promise<Map<string, Lookup>> {
+  const results = new Map<string, Lookup>();
   const since = new Date(now.getTime() - 90 * DAY).toISOString();
   let data: Record<string, RawRepository | null> | null;
   try {
@@ -228,7 +215,7 @@ async function fetchSplitting(
     }
     const middle = Math.ceil(repos.length / 2);
     for (const half of [repos.slice(0, middle), repos.slice(middle)]) {
-      for (const [repo, result] of await fetchSplitting(
+      for (const [repo, result] of await lookUpSplitting(
         github,
         half,
         now,
@@ -243,10 +230,9 @@ async function fetchSplitting(
     if (outage) throw error;
     return results;
   }
-  await Promise.all(
-    repos.map(async (repo, index) =>
-      results.set(repo, await toResult(github, data?.[`r${index}`], now)),
-    ),
-  );
+  repos.forEach((repo, index) => {
+    const raw = data?.[`r${index}`];
+    results.set(repo, raw ? { status: "found", raw } : { status: "missing" });
+  });
   return results;
 }

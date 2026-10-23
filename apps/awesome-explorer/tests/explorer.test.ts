@@ -45,8 +45,29 @@ function trend(repo: string, starsPerDay: number): TrendingRepo {
   };
 }
 
+const STAR_LISTS = {
+  data: {
+    viewer: {
+      lists: {
+        pageInfo: { hasNextPage: false, endCursor: null },
+        nodes: [
+          {
+            id: "L1",
+            name: "Tools",
+            items: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [{ nameWithOwner: "Acme/Starred" }, {}],
+            },
+          },
+        ],
+      },
+    },
+  },
+  errors: [],
+};
+
 // Metrics never arrive, so every entry stays queued for the test to see; only
-// the social preview query is answered, by `preview`.
+// the social preview query is answered, by `preview`, and star lists.
 function explorer(
   search: SearchItem[] = [],
   trending: TrendingRepo[] = [],
@@ -65,10 +86,12 @@ function explorer(
     starred: async () => [
       { full_name: "acme/starred", name: "starred", description: null },
     ],
-    graphql: (query: string) =>
+    graphql: async (query: string) =>
       query.includes("openGraphImageUrl")
         ? preview(query)
-        : new Promise(() => {}),
+        : query.includes("viewer")
+          ? STAR_LISTS
+          : new Promise(() => {}),
     starHistory,
   };
   return new Explorer(
@@ -111,6 +134,64 @@ describe("Explorer.list", () => {
     expect(view.pending).toBe(2);
     expect(view.entries[0]!.metrics).toBeUndefined();
   });
+
+  it("finishes the other repositories while one is slow", async () => {
+    const repository = (name: string) => ({
+      nameWithOwner: name,
+      description: null,
+      url: `https://github.com/${name}`,
+      isArchived: false,
+      isFork: false,
+      createdAt: "2020-01-01T00:00:00Z",
+      stargazerCount: 1,
+      hasIssuesEnabled: true,
+      primaryLanguage: null,
+      defaultBranchRef: null,
+      latestRelease: null,
+      licenseInfo: null,
+      openIssues: { totalCount: 0 },
+      openPullRequests: { totalCount: 0 },
+    });
+    const github = {
+      readme: async () =>
+        "- [One](https://github.com/acme/one)\n- [Slow](https://github.com/acme/slow)\n- [Two](https://github.com/acme/two)",
+      starHistory: async () => [],
+      graphql: async (query: string, variables: Record<string, unknown>) => {
+        if (query.includes("recentOpen")) {
+          if (variables.name === "slow") return new Promise(() => {});
+          return {
+            data: {
+              recent: { issueCount: 0, nodes: [] },
+              recentOpen: { issueCount: 0 },
+              oldOpen: { issueCount: 0 },
+              repository: null,
+            },
+            errors: [],
+          };
+        }
+        const names = [...query.matchAll(/name: "([^"]+)"/g)];
+        return {
+          data: Object.fromEntries(
+            names.map((match, index) => [
+              `r${index}`,
+              repository(`acme/${match[1]}`),
+            ]),
+          ),
+          errors: [],
+        };
+      },
+    };
+    const subject = new Explorer(
+      github as unknown as GitHub,
+      new Store(":memory:"),
+    );
+    await subject.list("acme/awesome-listed");
+    await vi.waitFor(async () => {
+      const view = await subject.list("acme/awesome-listed");
+      expect(view.pending).toBe(1);
+      expect(view.entries.filter((entry) => entry.metrics)).toHaveLength(2);
+    });
+  });
 });
 
 describe("Explorer.stars", () => {
@@ -120,6 +201,7 @@ describe("Explorer.stars", () => {
     expect(
       view.entries.map((entry) => [entry.repo, entry.description]),
     ).toEqual([["acme/starred", ""]]);
+    expect(view.entries[0]!.lists).toEqual(["Tools"]);
     expect(view.pending).toBe(1);
   });
 });

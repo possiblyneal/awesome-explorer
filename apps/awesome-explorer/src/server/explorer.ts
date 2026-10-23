@@ -15,11 +15,14 @@ import { RateLimitError, type GitHub } from "./github.ts";
 import { assessHealth } from "./health.ts";
 import {
   BATCH_SIZE,
-  fetchMetrics,
+  completeMetrics,
+  lookUpRepositories,
   repositoryLookups,
   starsPerDayLastWeek,
+  type Lookup,
   type MetricsResult,
 } from "./metrics.ts";
+import { fetchStarLists } from "./star-lists.ts";
 import { countOutboundLinks, parseAwesomeList } from "./readme.ts";
 import type { Cached, Store } from "./store.ts";
 import { fetchTrending } from "./trending.ts";
@@ -34,6 +37,8 @@ const SNOOZE_FOR = 30 * 24 * HOUR;
 const FAILED_FRESH_FOR = HOUR;
 const DISCOVER_FRESH_FOR = HOUR / 6;
 const RETRY_AFTER_ERROR = 60_000;
+/** Repositories being fetched at once; a slow one holds up only its own slot. */
+const POOL_SIZE = BATCH_SIZE;
 /** Fewest README links a list outside the index needs; measured products stop near 30, lists start past 80. */
 const MIN_LIST_LINKS = 50;
 /** README fetches in flight at once while vetting discovery candidates. */
@@ -98,10 +103,15 @@ function utcDay(time: number): number {
 export class Explorer {
   #github: GitHub;
   #store: Store;
-  /** Lowercased names waiting for metrics, including the batch in flight. */
+  /** Lowercased names waiting for metrics, including those in flight. */
   #queue = new Set<string>();
+  #inFlight = new Set<string>();
   #draining = false;
   #queueError: string | undefined;
+  /** No new lookups start before this time, after a rate limit or error. */
+  #pausedUntil = 0;
+  /** Wakes the drain loop when an in-flight repository finishes. */
+  #slotFreed: (() => void) | undefined;
   #listLoads = new Map<string, Promise<Cached<ListEntry[]>>>();
   #discoveries = new Map<
     string,
@@ -475,41 +485,81 @@ export class Explorer {
   }
 
   async #fetchStars(): Promise<ListEntry[]> {
-    return (await this.#github.starred()).map((item) => ({
+    const [starred, lists] = await Promise.all([
+      this.#github.starred(),
+      fetchStarLists(this.#github),
+    ]);
+    return starred.map((item) => ({
       repo: item.full_name,
       name: item.name,
       section: "",
       description: item.description ?? "",
+      lists: lists.get(item.full_name.toLowerCase()) ?? [],
     }));
   }
 
+  /**
+   * Keeps up to POOL_SIZE queued repositories in flight: each free slot is
+   * filled by one batch lookup, then every repository in it finishes on its
+   * own, so a slow activity query holds up only its slot.
+   */
   async #drain(): Promise<void> {
     if (this.#draining) return;
     this.#draining = true;
     try {
       while (this.#queue.size > 0) {
-        const batch = [...this.#queue].slice(0, BATCH_SIZE);
-        try {
-          const results = await fetchMetrics(this.#github, batch, new Date());
-          const fetchedAt = Date.now();
-          for (const [key, result] of results) {
-            this.#store.putMetrics(key, result, fetchedAt);
-            this.#queue.delete(key);
-          }
-          this.#queueError = undefined;
-        } catch (error) {
-          const resumeAt =
-            error instanceof RateLimitError
-              ? error.resetAt.getTime()
-              : Date.now() + RETRY_AFTER_ERROR;
-          this.#queueError = `${(error as Error).message}; retrying at ${new Date(resumeAt).toLocaleTimeString()}`;
-          await new Promise((resolve) =>
-            setTimeout(resolve, Math.max(resumeAt - Date.now(), 1000)),
-          );
+        const pause = this.#pausedUntil - Date.now();
+        if (pause > 0) {
+          await new Promise((resolve) => setTimeout(resolve, pause));
+          continue;
         }
+        const batch = [...this.#queue]
+          .filter((key) => !this.#inFlight.has(key))
+          .slice(0, POOL_SIZE - this.#inFlight.size);
+        if (batch.length === 0) {
+          await new Promise<void>((resolve) => (this.#slotFreed = resolve));
+          continue;
+        }
+        for (const key of batch) this.#inFlight.add(key);
+        let lookups: Map<string, Lookup>;
+        try {
+          lookups = await lookUpRepositories(this.#github, batch, new Date());
+        } catch (error) {
+          for (const key of batch) this.#inFlight.delete(key);
+          this.#pause(error);
+          continue;
+        }
+        for (const [key, lookup] of lookups) void this.#complete(key, lookup);
       }
     } finally {
       this.#draining = false;
     }
+  }
+
+  async #complete(key: string, lookup: Lookup): Promise<void> {
+    try {
+      const result = await completeMetrics(this.#github, lookup, new Date());
+      this.#store.putMetrics(key, result, Date.now());
+      this.#queue.delete(key);
+      // A repository already in flight can finish during a pause.
+      if (Date.now() >= this.#pausedUntil) this.#queueError = undefined;
+    } catch (error) {
+      this.#pause(error);
+    } finally {
+      this.#inFlight.delete(key);
+      this.#slotFreed?.();
+    }
+  }
+
+  /** Holds off new lookups until a rate limit resets, else for a minute. */
+  #pause(error: unknown): void {
+    const resumeAt = Math.max(
+      error instanceof RateLimitError
+        ? error.resetAt.getTime()
+        : Date.now() + RETRY_AFTER_ERROR,
+      Date.now() + 1000,
+    );
+    this.#pausedUntil = Math.max(this.#pausedUntil, resumeAt);
+    this.#queueError = `${(error as Error).message}; retrying at ${new Date(resumeAt).toLocaleTimeString()}`;
   }
 }

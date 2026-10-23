@@ -3,6 +3,7 @@ import type {
   ExploredEntry,
   HealthLabel,
   ListView as ListData,
+  RepoMetrics,
 } from "../shared/types.ts";
 import { STARS_LIST } from "../shared/index-list.ts";
 import { fetchList, fetchStars } from "./api.ts";
@@ -77,25 +78,122 @@ const COLUMNS: Column[] = [
     value: (e) => e.metrics?.openPullRequests,
   },
   {
-    key: "close",
-    title: "Issue close",
-    hint: "median days to close an issue, over the last 20 closed",
-    numeric: true,
-    value: (e) => e.metrics?.medianIssueCloseDays,
-  },
-  {
     key: "backlog",
     title: "Backlog",
-    hint: "share of all issues ever opened that are still open",
+    hint: "share of issues and PRs opened in the last year not yet merged or closed by a person",
     numeric: true,
-    value: (e) => e.metrics?.issueBacklog,
+    value: (e) => e.metrics?.backlog,
+  },
+  {
+    key: "handle",
+    title: "Handle",
+    hint: "median days to merge or close an issue or PR in the last year, counting open ones at their age",
+    numeric: true,
+    value: (e) => e.metrics?.medianHandleDays,
+  },
+  {
+    key: "oldOpen",
+    title: "Old open",
+    hint: "share of open issues and PRs opened over a year ago",
+    numeric: true,
+    value: (e) => e.metrics?.oldOpenShare,
+  },
+  {
+    key: "unanswered",
+    title: "Unanswered",
+    hint: "share of outside issues in the last year with no maintainer reply and not closed by a person",
+    numeric: true,
+    value: (e) => e.metrics?.unansweredShare,
+  },
+  {
+    key: "merge",
+    title: "PR merge",
+    hint: "median days to merge a PR, over the last year's merged",
+    numeric: true,
+    value: (e) => e.metrics?.medianMergeDays,
+  },
+  {
+    key: "committers",
+    title: "Committers",
+    hint: "distinct commit authors in 90 days, among the newest 100 commits",
+    numeric: true,
+    value: (e) => e.metrics?.committers90d,
+  },
+  {
+    key: "release",
+    title: "Release",
+    hint: "latest release",
+    numeric: true,
+    value: (e) => daysAgo(e.metrics?.lastReleaseAt),
   },
 ];
+
+const percentOf = (share: number | null) =>
+  share === null ? null : share * 100;
+
+// A share left unknown means nothing is outstanding, so it passes a limit; a
+// median left unknown is unproven, so it fails one.
+const LIMITS = {
+  maxBacklog: {
+    label: "max backlog %",
+    value: (m) => percentOf(m.backlog),
+    bound: "max",
+    unknownPasses: true,
+  },
+  maxOldOpen: {
+    label: "max old open %",
+    value: (m) => percentOf(m.oldOpenShare),
+    bound: "max",
+    unknownPasses: true,
+  },
+  maxUnanswered: {
+    label: "max unanswered %",
+    value: (m) => percentOf(m.unansweredShare),
+    bound: "max",
+    unknownPasses: true,
+  },
+  maxHandleDays: {
+    label: "max handle days",
+    value: (m) => m.medianHandleDays,
+    bound: "max",
+    unknownPasses: false,
+  },
+  maxMergeDays: {
+    label: "max PR merge days",
+    value: (m) => m.medianMergeDays,
+    bound: "max",
+    unknownPasses: false,
+  },
+  minCommitters: {
+    label: "min committers",
+    value: (m) => m.committers90d,
+    bound: "min",
+    unknownPasses: false,
+  },
+  minMomentum: {
+    label: "min +30d stars %",
+    value: (m) => (m.stars30d / Math.max(m.stars, 1)) * 100,
+    bound: "min",
+    unknownPasses: false,
+  },
+} satisfies Record<
+  string,
+  {
+    label: string;
+    value: (m: RepoMetrics) => number | null;
+    bound: "max" | "min";
+    unknownPasses: boolean;
+  }
+>;
+
+type LimitKey = keyof typeof LIMITS;
 
 interface Filters {
   text: string;
   labels: Set<HealthLabel>;
   section: string;
+  /** A star list the entry must be in, or "" for any. */
+  starList: string;
   language: string;
   minStars: number;
   /** Days since the last commit, or 0 for any. */
@@ -103,6 +201,20 @@ interface Filters {
   /** Most open issues or pull requests allowed, or null for any. */
   maxIssues: number | null;
   maxPullRequests: number | null;
+  limits: Partial<Record<LimitKey, number>>;
+  /** Days since the latest release, or 0 for any. */
+  releasedWithin: number;
+  license: string;
+  hideForks: boolean;
+  hideArchived: boolean;
+}
+
+function withinLimit(m: RepoMetrics | undefined, key: LimitKey, limit: number) {
+  const { value, bound, unknownPasses } = LIMITS[key];
+  if (!m) return false;
+  const actual = value(m);
+  if (actual === null) return unknownPasses;
+  return bound === "max" ? actual <= limit : actual >= limit;
 }
 
 const DAY = 86_400_000;
@@ -114,6 +226,8 @@ function matches(entry: ExploredEntry, filters: Filters): boolean {
   )
     return false;
   if (filters.section && entry.section !== filters.section) return false;
+  if (filters.starList && !entry.lists?.includes(filters.starList))
+    return false;
   if (filters.language && entry.metrics?.language !== filters.language)
     return false;
   if (filters.minStars > 0 && (entry.metrics?.stars ?? 0) < filters.minStars)
@@ -133,6 +247,17 @@ function matches(entry: ExploredEntry, filters: Filters): boolean {
     (entry.metrics?.openPullRequests ?? Infinity) > filters.maxPullRequests
   )
     return false;
+  for (const [key, limit] of Object.entries(filters.limits))
+    if (!withinLimit(entry.metrics, key as LimitKey, limit)) return false;
+  if (filters.releasedWithin > 0) {
+    const last = entry.metrics?.lastReleaseAt;
+    if (!last || Date.now() - Date.parse(last) > filters.releasedWithin * DAY)
+      return false;
+  }
+  if (filters.license && entry.metrics?.license !== filters.license)
+    return false;
+  if (filters.hideForks && entry.metrics?.fork) return false;
+  if (filters.hideArchived && entry.metrics?.archived) return false;
   if (filters.text) {
     const haystack = `${entry.repo} ${entry.name} ${entry.description} ${entry.metrics?.description ?? ""}`;
     if (!haystack.toLowerCase().includes(filters.text.toLowerCase()))
@@ -202,6 +327,11 @@ function HealthCell({ entry }: { entry: ExploredEntry }) {
   );
 }
 
+const percent = (share: number | null | undefined) =>
+  share != null ? `${Math.round(share * 100)}%` : "";
+const days = (value: number | null | undefined) =>
+  value != null ? `${value}d` : "";
+
 function Row({ entry }: { entry: ExploredEntry }) {
   const m = entry.metrics;
   return (
@@ -225,7 +355,12 @@ function Row({ entry }: { entry: ExploredEntry }) {
         <div className="description">{entry.description || m?.description}</div>
         <div className="tags">
           {entry.section && <span>{entry.section}</span>}
+          {entry.lists?.map((list) => (
+            <span key={list}>{list}</span>
+          ))}
           {m?.language && <span>{m.language}</span>}
+          {m?.license && <span>{m.license}</span>}
+          {m?.fork && <span>fork</span>}
         </div>
       </td>
       <td>
@@ -239,12 +374,13 @@ function Row({ entry }: { entry: ExploredEntry }) {
         {m ? (m.issuesEnabled ? compact(m.openIssues) : "off") : ""}
       </td>
       <td className="num">{m ? compact(m.openPullRequests) : ""}</td>
-      <td className="num">
-        {m?.medianIssueCloseDays != null ? `${m.medianIssueCloseDays}d` : ""}
-      </td>
-      <td className="num">
-        {m?.issueBacklog != null ? `${Math.round(m.issueBacklog * 100)}%` : ""}
-      </td>
+      <td className="num">{percent(m?.backlog)}</td>
+      <td className="num">{days(m?.medianHandleDays)}</td>
+      <td className="num">{percent(m?.oldOpenShare)}</td>
+      <td className="num">{percent(m?.unansweredShare)}</td>
+      <td className="num">{days(m?.medianMergeDays)}</td>
+      <td className="num">{m?.committers90d ?? ""}</td>
+      <td className="num">{m?.lastReleaseAt ? ago(m.lastReleaseAt) : ""}</td>
     </tr>
   );
 }
@@ -257,11 +393,17 @@ export function ListView({ repo }: { repo: string }) {
     text: "",
     labels: new Set(),
     section: "",
+    starList: "",
     language: "",
     minStars: 0,
     committedWithin: 0,
     maxIssues: null,
     maxPullRequests: null,
+    limits: {},
+    releasedWithin: 0,
+    license: "",
+    hideForks: false,
+    hideArchived: false,
   });
   const [sort, setSort] = useState({ key: "score", descending: true });
 
@@ -270,12 +412,27 @@ export function ListView({ repo }: { repo: string }) {
     () => [...new Set(entries.map((e) => e.section).filter(Boolean))],
     [entries],
   );
+  const starLists = useMemo(
+    () => [...new Set(entries.flatMap((e) => e.lists ?? []))].sort(),
+    [entries],
+  );
   const languages = useMemo(
     () =>
       [
         ...new Set(
           entries.flatMap((e) =>
             e.metrics?.language ? [e.metrics.language] : [],
+          ),
+        ),
+      ].sort(),
+    [entries],
+  );
+  const licenses = useMemo(
+    () =>
+      [
+        ...new Set(
+          entries.flatMap((e) =>
+            e.metrics?.license ? [e.metrics.license] : [],
           ),
         ),
       ].sort(),
@@ -301,6 +458,13 @@ export function ListView({ repo }: { repo: string }) {
     const labels = new Set(filters.labels);
     if (!labels.delete(label)) labels.add(label);
     setFilters({ ...filters, labels });
+  }
+
+  function setLimit(key: LimitKey, value: string) {
+    const limits = { ...filters.limits };
+    if (value === "") delete limits[key];
+    else limits[key] = Number(value);
+    setFilters({ ...filters, limits });
   }
 
   function sortBy(column: Column) {
@@ -382,6 +546,20 @@ export function ListView({ repo }: { repo: string }) {
                 ))}
               </select>
             )}
+            {starLists.length > 0 && (
+              <select
+                value={filters.starList}
+                onChange={(event) =>
+                  setFilters({ ...filters, starList: event.target.value })
+                }
+                aria-label="Star list"
+              >
+                <option value="">All star lists</option>
+                {starLists.map((list) => (
+                  <option key={list}>{list}</option>
+                ))}
+              </select>
+            )}
             {languages.length > 1 && (
               <select
                 value={filters.language}
@@ -454,6 +632,71 @@ export function ListView({ repo }: { repo: string }) {
                 }
               />
             </label>
+            <details className="more-filters">
+              <summary>More filters</summary>
+              {(Object.keys(LIMITS) as LimitKey[]).map((key) => (
+                <label key={key}>
+                  {LIMITS[key].label}{" "}
+                  <input
+                    type="number"
+                    min={0}
+                    value={filters.limits[key] ?? ""}
+                    onChange={(event) => setLimit(key, event.target.value)}
+                  />
+                </label>
+              ))}
+              <select
+                value={filters.releasedWithin}
+                onChange={(event) =>
+                  setFilters({
+                    ...filters,
+                    releasedWithin: Number(event.target.value),
+                  })
+                }
+                aria-label="Latest release within"
+              >
+                <option value={0}>Any release</option>
+                <option value={90}>Released within 90 days</option>
+                <option value={365}>Released within a year</option>
+              </select>
+              {licenses.length > 0 && (
+                <select
+                  value={filters.license}
+                  onChange={(event) =>
+                    setFilters({ ...filters, license: event.target.value })
+                  }
+                  aria-label="License"
+                >
+                  <option value="">All licenses</option>
+                  {licenses.map((license) => (
+                    <option key={license}>{license}</option>
+                  ))}
+                </select>
+              )}
+              <label>
+                <input
+                  type="checkbox"
+                  checked={filters.hideForks}
+                  onChange={(event) =>
+                    setFilters({ ...filters, hideForks: event.target.checked })
+                  }
+                />{" "}
+                hide forks
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={filters.hideArchived}
+                  onChange={(event) =>
+                    setFilters({
+                      ...filters,
+                      hideArchived: event.target.checked,
+                    })
+                  }
+                />{" "}
+                hide archived
+              </label>
+            </details>
             <span className="muted">{rows.length} shown</span>
           </div>
           <div className="table-wrap">

@@ -11,6 +11,10 @@ import { DatabaseSync } from "node:sqlite";
 import type { ListEntry } from "../shared/types.ts";
 import type { MetricsResult } from "./metrics.ts";
 
+// Raised whenever RepoMetrics changes shape, so metrics cached in the old one
+// are dropped and refetched instead of reaching the UI without their fields.
+const METRICS_VERSION = 1;
+
 export interface Cached<T> {
   value: T;
   fetchedAt: number;
@@ -29,6 +33,13 @@ export class Store {
       CREATE TABLE IF NOT EXISTS dismissals (repo TEXT PRIMARY KEY, until INTEGER);
       CREATE TABLE IF NOT EXISTS translations (source TEXT PRIMARY KEY, english TEXT NOT NULL, fetched_at INTEGER NOT NULL);
     `);
+    const { user_version } = this.#db.prepare("PRAGMA user_version").get() as {
+      user_version: number;
+    };
+    if (user_version < METRICS_VERSION)
+      this.#db.exec(
+        `DELETE FROM metrics; PRAGMA user_version = ${METRICS_VERSION}`,
+      );
   }
 
   getList(key: string): Cached<ListEntry[]> | undefined {

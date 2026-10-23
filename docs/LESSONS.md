@@ -20,6 +20,22 @@ GitHub restricted stargazer listings to admins and collaborators in 2026: GraphQ
 **Do:** use `GET /repos/{owner}/{repo}/stargazers/history`, weekly buckets newest first with per-day counts.
 **Source:** https://github.blog/changelog/2026-09-04-new-api-endpoint-provides-privacy-safe-star-history-data/
 
+## Expect GraphQL concurrency to stop at 60 seconds of server time a minute
+
+GitHub's secondary limit allows 60 s of GraphQL CPU time per 60 s of real time, estimated by response time. An activity query takes 1–7 s, so 10 in flight trip it within a minute or two, then the queue waits out the 60 s pause.
+
+**Do:** treat a larger pool as no faster; lower the cost of each query to raise throughput.
+**Why:** metrics drain near 0.5 repositories a second however many are in flight.
+**Source:** https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#secondary-rate-limits
+
+## Search a repository by its canonical name
+
+Issue search ignores repository renames: `repo:facebook/react` matches nothing, without an error, while the repository itself still resolves under the old name.
+
+**Do:** pass the `nameWithOwner` GitHub answers for the repository to `repo:` qualifiers, never the name a list links to.
+**Why:** every renamed repository read as having no issues or pull requests.
+**Source:** https://docs.github.com/search-github/searching-on-github/searching-issues-and-pull-requests#search-within-a-users-or-organizations-repositories
+
 ## Load the Vite config natively under node --watch
 
 Vite's default `bundle` config loader writes a temp `.mjs` copy of `vite.config.ts`, imports it, then deletes it; `node --watch` sees that import change and restarts the dev server in a loop.
