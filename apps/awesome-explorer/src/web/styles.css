@@ -404,3 +404,29 @@ button.link {
   color: var(--text);
   border-color: var(--muted);
 }
+
+.undo-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 20%);
+  font-size: 14px;
+}
+
+.undo-bar button {
+  color: var(--link);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-weight: 600;
+}

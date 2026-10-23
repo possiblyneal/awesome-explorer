@@ -166,6 +166,11 @@ export class Explorer {
     this.#store.putDismissal(repo.toLowerCase(), Date.now() + SNOOZE_FOR);
   }
 
+  /** Undoes a dismissal or snooze. */
+  restore(repo: string): void {
+    this.#store.deleteDismissal(repo.toLowerCase());
+  }
+
   async #view(
     repo: string,
     load: () => Promise<Cached<ListEntry[]> & { error?: string }>,

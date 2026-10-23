@@ -1,12 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 import type { TrendingRepo } from "../shared/types.ts";
-import { fetchTrending, hideTrending } from "./api.ts";
+import { fetchTrending, hideTrending, restoreTrending } from "./api.ts";
 import { compact } from "./format.ts";
 
 const PAGE = 48;
 
 type HideAction = "dismiss" | "snooze";
+
+const UNDO_FOR = 5000;
+
+/** The latest hide, kept so undo can put its card back where it was. */
+interface Hidden {
+  card: TrendingRepo;
+  index: number;
+  action: HideAction;
+}
 
 function RepoIcon() {
   return (
@@ -124,7 +133,11 @@ export function TrendingView() {
   const [repos, setRepos] = useState<TrendingRepo[]>();
   const [error, setError] = useState<string>();
   const [shown, setShown] = useState(PAGE);
+  const [hidden, setHidden] = useState<Hidden>();
   const sentinel = useRef<HTMLDivElement>(null);
+  const undoTimer = useRef<number>(undefined);
+
+  useEffect(() => () => window.clearTimeout(undoTimer.current), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,9 +166,33 @@ export function TrendingView() {
   }, [more, shown]);
 
   async function hide(repo: string, action: HideAction) {
+    const index = repos?.findIndex((r) => r.repo === repo) ?? -1;
+    const card = repos?.[index];
+    if (!card) return;
     try {
       await hideTrending(repo, action);
       setRepos((current) => current?.filter((r) => r.repo !== repo));
+      setHidden({ card, index, action });
+      window.clearTimeout(undoTimer.current);
+      undoTimer.current = window.setTimeout(
+        () => setHidden(undefined),
+        UNDO_FOR,
+      );
+    } catch (reason) {
+      setError((reason as Error).message);
+    }
+  }
+
+  async function undo() {
+    if (!hidden) return;
+    const { card, index } = hidden;
+    window.clearTimeout(undoTimer.current);
+    setHidden(undefined);
+    try {
+      await restoreTrending(card.repo);
+      setRepos((current) =>
+        current?.toSpliced(Math.min(index, current.length), 0, card),
+      );
     } catch (reason) {
       setError((reason as Error).message);
     }
@@ -185,6 +222,15 @@ export function TrendingView() {
         </div>
       )}
       {more && <div ref={sentinel} className="sentinel" />}
+      {hidden && (
+        <div className="undo-bar" role="status">
+          <span>
+            {hidden.action === "dismiss" ? "Dismissed" : "Snoozed"}{" "}
+            {hidden.card.repo}
+          </span>
+          <button onClick={undo}>Undo</button>
+        </div>
+      )}
     </section>
   );
 }

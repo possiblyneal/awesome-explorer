@@ -49,6 +49,16 @@ app.post("/api/trending/:owner/:name/:action", (req, res) => {
   res.status(204).end();
 });
 
+app.delete("/api/trending/:owner/:name", (req, res) => {
+  const { owner, name } = req.params;
+  if (!NAME.test(owner) || !NAME.test(name)) {
+    res.status(400).json({ error: "expected a repository as owner/name" });
+    return;
+  }
+  explorer.restore(`${owner}/${name}`);
+  res.status(204).end();
+});
+
 app.get("/api/discover", async (req, res) => {
   const query = typeof req.query.q === "string" ? req.query.q : "";
   res.json(await explorer.discover(query));
