@@ -29,6 +29,8 @@ const ROW = /<article class="Box-row">([\s\S]*?)<\/article>/g;
 const NAME = /<h2[^>]*>\s*<a[^>]*href="\/([\w.-]+\/[\w.-]+)"/;
 const DESCRIPTION = /<p class="col-9[^"]*">([\s\S]*?)<\/p>/;
 const LANGUAGE = /itemprop="programmingLanguage">([^<]+)</;
+const LANGUAGE_COLOR =
+  /class="repo-language-color"[^>]*background-color:\s*(#[0-9a-fA-F]{3,8})/;
 const STARS = /\/stargazers"[\s\S]*?<\/svg>\s*([\d,]+)\s*<\/a>/;
 const GAINED = /([\d,]+) stars (?:today|this week|this month)/;
 
@@ -36,6 +38,7 @@ export interface TrendingRow {
   repo: string;
   description: string | null;
   language: string | null;
+  languageColor: string | null;
   stars: number;
   gained: number;
 }
@@ -67,6 +70,7 @@ export function parseTrending(html: string): TrendingRow[] {
       repo,
       description: description ? decode(description) || null : null,
       language: LANGUAGE.exec(row!)?.[1]?.trim() ?? null,
+      languageColor: LANGUAGE_COLOR.exec(row!)?.[1] ?? null,
       stars: count(STARS.exec(row!)?.[1] ?? "0"),
       gained: count(GAINED.exec(row!)?.[1] ?? "0"),
     });
@@ -123,6 +127,7 @@ export async function fetchTrending(
           repo: row.repo,
           description: row.description,
           language: row.language,
+          languageColor: row.languageColor,
           stars: row.stars,
           gained: {},
           starsPerDay: 0,

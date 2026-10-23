@@ -32,6 +32,7 @@ function trend(repo: string, starsPerDay: number): TrendingRepo {
     repo,
     description: null,
     language: null,
+    languageColor: null,
     stars: 1,
     gained: {},
     starsPerDay,
