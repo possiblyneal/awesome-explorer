@@ -33,6 +33,7 @@ function TrendingCard({
   onHide: (repo: string, action: HideAction) => void;
 }) {
   const [owner, name] = repo.repo.split("/");
+  const [imageBroken, setImageBroken] = useState(false);
   const press = (action: HideAction) => (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -53,13 +54,23 @@ function TrendingCard({
             : undefined
         }
       >
-        <img
-          src={`https://github.com/${owner}.png`}
-          alt=""
-          loading="lazy"
-          width="96"
-          height="96"
-        />
+        {repo.image && !imageBroken ? (
+          <img
+            className="card-social"
+            src={repo.image}
+            alt=""
+            loading="lazy"
+            onError={() => setImageBroken(true)}
+          />
+        ) : (
+          <img
+            src={`https://github.com/${owner}.png`}
+            alt=""
+            loading="lazy"
+            width="96"
+            height="96"
+          />
+        )}
       </div>
       <div className="card-body">
         <h3 className="card-title">

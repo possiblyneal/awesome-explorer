@@ -36,13 +36,19 @@ function trend(repo: string, starsPerDay: number): TrendingRepo {
     stars: 1,
     gained: {},
     starsPerDay,
+    image: null,
   };
 }
 
-// Metrics never arrive, so every entry stays queued for the test to see.
+// Metrics never arrive, so every entry stays queued for the test to see; only
+// the social preview query is answered, by `preview`.
 function explorer(
   search: SearchItem[] = [],
   trending: TrendingRepo[] = [],
+  preview: (query: string) => Promise<unknown> = async () => ({
+    data: {},
+    errors: [],
+  }),
 ): Explorer {
   const github = {
     readme: async (repo: string) => {
@@ -53,7 +59,10 @@ function explorer(
     starred: async () => [
       { full_name: "acme/starred", name: "starred", description: null },
     ],
-    graphql: () => new Promise(() => {}),
+    graphql: (query: string) =>
+      query.includes("openGraphImageUrl")
+        ? preview(query)
+        : new Promise(() => {}),
     starHistory: async () => [],
   };
   return new Explorer(
@@ -120,5 +129,61 @@ describe("Explorer.trending", () => {
     subject.dismiss("Acme/Dismissed");
     subject.snooze("acme/snoozed");
     expect((await subject.trending()).map((r) => r.repo)).toEqual(["acme/new"]);
+  });
+
+  it("keeps only uploaded social previews, once per refresh", async () => {
+    const queries: string[] = [];
+    const subject = explorer(
+      [],
+      ["acme/custom", "acme/generated", "acme/gone"].map((repo) =>
+        trend(repo, 1),
+      ),
+      async (query) => {
+        queries.push(query);
+        return {
+          data: {
+            r0: {
+              openGraphImageUrl:
+                "https://repository-images.githubusercontent.com/1/a",
+              usesCustomOpenGraphImage: true,
+            },
+            r1: {
+              openGraphImageUrl:
+                "https://opengraph.githubassets.com/x/acme/generated",
+              usesCustomOpenGraphImage: false,
+            },
+            r2: null,
+          },
+          errors: [{ type: "NOT_FOUND", message: "gone" }],
+        };
+      },
+    );
+    const first = await subject.trending();
+    await subject.trending();
+    expect(first.map((r) => [r.repo, r.image])).toEqual([
+      ["acme/custom", "https://repository-images.githubusercontent.com/1/a"],
+      ["acme/generated", null],
+      ["acme/gone", null],
+    ]);
+    expect(queries).toHaveLength(1);
+  });
+
+  it("batches lookups 100 repositories per query", async () => {
+    const queries: string[] = [];
+    const repos = Array.from({ length: 101 }, (_, i) => trend(`acme/r${i}`, 1));
+    await explorer([], repos, async (query) => {
+      queries.push(query);
+      return { data: {}, errors: [] };
+    }).trending();
+    expect(queries).toHaveLength(2);
+  });
+
+  it("still returns trending, without images, when the lookup fails", async () => {
+    const subject = explorer([], [trend("acme/new", 1)], async () => {
+      throw new Error("rate limited");
+    });
+    expect((await subject.trending()).map((r) => [r.repo, r.image])).toEqual([
+      ["acme/new", null],
+    ]);
   });
 });

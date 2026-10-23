@@ -30,6 +30,8 @@ const RETRY_AFTER_ERROR = 60_000;
 const MIN_LIST_LINKS = 50;
 /** README fetches in flight at once while vetting discovery candidates. */
 const README_CONCURRENCY = 10;
+/** Repositories per social preview query. */
+const PREVIEW_BATCH_SIZE = 100;
 
 export class NotFoundError extends Error {}
 
@@ -101,7 +103,9 @@ export class Explorer {
       !this.#trending ||
       Date.now() - this.#trending.at >= TRENDING_FRESH_FOR
     ) {
-      const repos = this.#fetchTrending();
+      const repos = this.#fetchTrending().then((found) =>
+        this.#withPreviews(found),
+      );
       this.#trending = { at: Date.now(), repos };
       repos.catch(() => (this.#trending = undefined));
     }
@@ -112,6 +116,44 @@ export class Explorer {
     const hidden = this.#store.getDismissed(Date.now());
     for (const entry of stars.value) hidden.add(entry.repo.toLowerCase());
     return repos.filter((repo) => !hidden.has(repo.repo.toLowerCase()));
+  }
+
+  /**
+   * Fills in each repository's uploaded social preview, once per trending
+   * refresh. GitHub's generated card is not a preview; a failed batch or a
+   * repository GitHub no longer has leaves its image null.
+   */
+  async #withPreviews(repos: TrendingRepo[]): Promise<TrendingRepo[]> {
+    const images = new Map<string, string>();
+    for (let start = 0; start < repos.length; start += PREVIEW_BATCH_SIZE) {
+      const batch = repos.slice(start, start + PREVIEW_BATCH_SIZE);
+      const lookups = batch.map((repo, index) => {
+        const [owner, name] = repo.repo.split("/");
+        return `r${index}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { openGraphImageUrl usesCustomOpenGraphImage }`;
+      });
+      try {
+        const { data } = await this.#github.graphql<
+          Record<
+            string,
+            {
+              openGraphImageUrl: string;
+              usesCustomOpenGraphImage: boolean;
+            } | null
+          >
+        >(`query {\n${lookups.join("\n")}\n}`, {});
+        batch.forEach((repo, index) => {
+          const preview = data?.[`r${index}`];
+          if (preview?.usesCustomOpenGraphImage)
+            images.set(repo.repo, preview.openGraphImageUrl);
+        });
+      } catch {
+        // A failed lookup only costs those repositories their image.
+      }
+    }
+    return repos.map((repo) => ({
+      ...repo,
+      image: images.get(repo.repo) ?? null,
+    }));
   }
 
   /** Hides a repository from trending for good. */

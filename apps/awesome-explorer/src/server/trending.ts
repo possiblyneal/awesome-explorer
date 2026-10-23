@@ -131,6 +131,7 @@ export async function fetchTrending(
           stars: row.stars,
           gained: {},
           starsPerDay: 0,
+          image: null,
         };
         merged.gained[period] = row.gained;
         merged.starsPerDay = Math.max(
