@@ -131,8 +131,8 @@ const COLUMNS: Column[] = [
 const percentOf = (share: number | null) =>
   share === null ? null : share * 100;
 
-// A share left unknown means nothing is outstanding, so it passes a limit; a
-// median left unknown is unproven, so it fails one.
+// A backlog or old open share is unknown only when nothing is outstanding, so
+// it passes a limit; any other unknown value is unproven, so it fails one.
 const LIMITS = {
   maxBacklog: {
     label: "max backlog %",
@@ -150,7 +150,7 @@ const LIMITS = {
     label: "max unanswered %",
     value: (m) => percentOf(m.unansweredShare),
     bound: "max",
-    unknownPasses: true,
+    unknownPasses: false,
   },
   maxHandleDays: {
     label: "max handle days",

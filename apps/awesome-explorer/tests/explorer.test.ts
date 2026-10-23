@@ -135,7 +135,7 @@ describe("Explorer.list", () => {
     expect(view.entries[0]!.metrics).toBeUndefined();
   });
 
-  it("finishes the other repositories while one is slow", async () => {
+  it("finishes the other repositories while one is slow, looking up whole batches", async () => {
     const repository = (name: string) => ({
       nameWithOwner: name,
       description: null,
@@ -152,13 +152,19 @@ describe("Explorer.list", () => {
       openIssues: { totalCount: 0 },
       openPullRequests: { totalCount: 0 },
     });
+    const batches: number[] = [];
     const github = {
       readme: async () =>
-        "- [One](https://github.com/acme/one)\n- [Slow](https://github.com/acme/slow)\n- [Two](https://github.com/acme/two)",
+        ["slow", ...Array.from({ length: 11 }, (_, i) => `r${i}`)]
+          .map((name) => `- [${name}](https://github.com/acme/${name})`)
+          .join("\n"),
       starHistory: async () => [],
       graphql: async (query: string, variables: Record<string, unknown>) => {
         if (query.includes("recentOpen")) {
           if (variables.name === "slow") return new Promise(() => {});
+          // Finish one at a time, as live queries do.
+          const index = Number(String(variables.name).slice(1));
+          await new Promise((resolve) => setTimeout(resolve, index * 5));
           return {
             data: {
               recent: { issueCount: 0, nodes: [] },
@@ -170,6 +176,7 @@ describe("Explorer.list", () => {
           };
         }
         const names = [...query.matchAll(/name: "([^"]+)"/g)];
+        batches.push(names.length);
         return {
           data: Object.fromEntries(
             names.map((match, index) => [
@@ -189,8 +196,10 @@ describe("Explorer.list", () => {
     await vi.waitFor(async () => {
       const view = await subject.list("acme/awesome-listed");
       expect(view.pending).toBe(1);
-      expect(view.entries.filter((entry) => entry.metrics)).toHaveLength(2);
+      expect(view.entries.filter((entry) => entry.metrics)).toHaveLength(11);
     });
+    // A lookup of one repository could not tell a GitHub outage from a refusal.
+    expect(batches).toEqual([10, 2]);
   });
 });
 

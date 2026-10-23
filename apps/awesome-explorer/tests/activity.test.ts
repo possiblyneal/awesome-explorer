@@ -141,6 +141,14 @@ describe("summarizeActivity", () => {
     );
   });
 
+  it("calls a window with no outside issues fully answered, and 1 to 4 unknown", () => {
+    const own = item({ authorAssociation: "OWNER" });
+    expect(summarizeActivity(activity([own]), 1, NOW).unansweredShare).toBe(0);
+    expect(
+      summarizeActivity(activity([own, item({})]), 1, NOW).unansweredShare,
+    ).toBeNull();
+  });
+
   it("takes the median merge days over merged pull requests", () => {
     const merged = (days: number) =>
       item({

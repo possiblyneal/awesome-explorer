@@ -3,7 +3,7 @@
 // with a 502, so lists are read LIST_PAGE at a time, and a list holding more
 // than ITEM_PAGE repositories is read on by its node id.
 
-import { GitHubError, type GitHub } from "./github.ts";
+import { graphqlData, type GitHub } from "./github.ts";
 
 const LIST_PAGE = 10;
 const ITEM_PAGE = 100;
@@ -38,21 +38,6 @@ query($id: ID!, $after: String) {
   node(id: $id) { ... on UserList { items(first: ${ITEM_PAGE}, after: $after) { ${ITEMS} } } }
 }`;
 
-async function query<T>(
-  github: Pick<GitHub, "graphql">,
-  text: string,
-  variables: Record<string, unknown>,
-): Promise<T> {
-  const response = await github.graphql<T>(text, variables);
-  const error = response.errors[0];
-  if (error || !response.data)
-    throw new GitHubError(
-      200,
-      `GitHub GraphQL: ${error?.message ?? "no data"}`,
-    );
-  return response.data;
-}
-
 /** Lowercased `owner/name` to the names of the star lists holding it. */
 export async function fetchStarLists(
   github: Pick<GitHub, "graphql">,
@@ -60,7 +45,7 @@ export async function fetchStarLists(
   const byRepo = new Map<string, string[]>();
   let after: string | null = null;
   do {
-    const data: { viewer: { lists: Page<RawList> } } = await query(
+    const data: { viewer: { lists: Page<RawList> } } = await graphqlData(
       github,
       LISTS,
       { after },
@@ -76,7 +61,7 @@ export async function fetchStarLists(
           byRepo.set(key, [...(byRepo.get(key) ?? []), list.name]);
         }
         if (!items.pageInfo.hasNextPage) break;
-        const more: { node: { items: Items } } = await query(
+        const more: { node: { items: Items } } = await graphqlData(
           github,
           MORE_ITEMS,
           { id: list.id, after: items.pageInfo.endCursor },

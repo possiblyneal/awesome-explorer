@@ -37,8 +37,12 @@ const SNOOZE_FOR = 30 * 24 * HOUR;
 const FAILED_FRESH_FOR = HOUR;
 const DISCOVER_FRESH_FOR = HOUR / 6;
 const RETRY_AFTER_ERROR = 60_000;
-/** Repositories being fetched at once; a slow one holds up only its own slot. */
-const POOL_SIZE = BATCH_SIZE;
+/**
+ * Repositories being fetched at once; a slow one holds up only its own slot.
+ * More would not be faster: GitHub's GraphQL CPU budget bounds throughput
+ * (docs/LESSONS.md).
+ */
+const POOL_SIZE = 10;
 /** Fewest README links a list outside the index needs; measured products stop near 30, lists start past 80. */
 const MIN_LIST_LINKS = 50;
 /** README fetches in flight at once while vetting discovery candidates. */
@@ -106,6 +110,8 @@ export class Explorer {
   /** Lowercased names waiting for metrics, including those in flight. */
   #queue = new Set<string>();
   #inFlight = new Set<string>();
+  /** Looked up in a batch, waiting for a slot to finish in. */
+  #lookedUp = new Map<string, Lookup>();
   #draining = false;
   #queueError: string | undefined;
   /** No new lookups start before this time, after a rate limit or error. */
@@ -499,9 +505,11 @@ export class Explorer {
   }
 
   /**
-   * Keeps up to POOL_SIZE queued repositories in flight: each free slot is
-   * filled by one batch lookup, then every repository in it finishes on its
-   * own, so a slow activity query holds up only its slot.
+   * Keeps up to POOL_SIZE queued repositories in flight, each finishing on its
+   * own, so a slow activity query holds up only its slot. Free slots take
+   * repositories from the last batch lookup, and a new batch of BATCH_SIZE is
+   * looked up only once those run out: a one-repository lookup could not tell
+   * a GitHub outage from a refused query.
    */
   async #drain(): Promise<void> {
     if (this.#draining) return;
@@ -513,23 +521,34 @@ export class Explorer {
           await new Promise((resolve) => setTimeout(resolve, pause));
           continue;
         }
+        if (this.#inFlight.size >= POOL_SIZE) {
+          await new Promise<void>((resolve) => (this.#slotFreed = resolve));
+          continue;
+        }
+        const next = this.#lookedUp.entries().next();
+        if (!next.done) {
+          const [key, lookup] = next.value;
+          this.#lookedUp.delete(key);
+          this.#inFlight.add(key);
+          void this.#complete(key, lookup);
+          continue;
+        }
         const batch = [...this.#queue]
           .filter((key) => !this.#inFlight.has(key))
-          .slice(0, POOL_SIZE - this.#inFlight.size);
+          .slice(0, BATCH_SIZE);
         if (batch.length === 0) {
           await new Promise<void>((resolve) => (this.#slotFreed = resolve));
           continue;
         }
-        for (const key of batch) this.#inFlight.add(key);
-        let lookups: Map<string, Lookup>;
         try {
-          lookups = await lookUpRepositories(this.#github, batch, new Date());
+          this.#lookedUp = await lookUpRepositories(
+            this.#github,
+            batch,
+            new Date(),
+          );
         } catch (error) {
-          for (const key of batch) this.#inFlight.delete(key);
           this.#pause(error);
-          continue;
         }
-        for (const [key, lookup] of lookups) void this.#complete(key, lookup);
       }
     } finally {
       this.#draining = false;
@@ -560,6 +579,6 @@ export class Explorer {
       Date.now() + 1000,
     );
     this.#pausedUntil = Math.max(this.#pausedUntil, resumeAt);
-    this.#queueError = `${(error as Error).message}; retrying at ${new Date(resumeAt).toLocaleTimeString()}`;
+    this.#queueError = `${(error as Error).message}; retrying at ${new Date(this.#pausedUntil).toLocaleTimeString()}`;
   }
 }

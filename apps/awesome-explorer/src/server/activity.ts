@@ -9,12 +9,13 @@
 // weeks, so new ones have had a chance to be handled. Search counts cover the
 // whole window; who closed an item and when it was answered come only from the
 // newest SAMPLE_SIZE items in it, so shares of a busier repository are
-// estimated from that sample.
+// estimated from that sample. A maintainer reply counts only among an item's
+// first 10 comments; reading more costs GitHub's GraphQL CPU budget.
 
-import { GitHubError, type GitHub } from "./github.ts";
+import { graphqlData, type GitHub } from "./github.ts";
 
 const DAY = 86_400_000;
-export const SAMPLE_SIZE = 100;
+const SAMPLE_SIZE = 100;
 /** Fewer sampled items than this leave a median or share unknown. */
 const MIN_SAMPLE = 5;
 const MAINTAINERS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
@@ -91,7 +92,7 @@ export async function fetchActivity(
   const [owner, name] = repo.split("/");
   const yearAgo = date(now.getTime() - 365 * DAY);
   const window = `repo:${repo} created:${yearAgo}..${date(now.getTime() - 14 * DAY)}`;
-  const response = await github.graphql<RawActivity>(QUERY, {
+  return graphqlData<RawActivity>(github, QUERY, {
     recent: `${window} sort:created-desc`,
     recentOpen: `${window} is:open`,
     oldOpen: `repo:${repo} is:open created:<${yearAgo}`,
@@ -99,13 +100,6 @@ export async function fetchActivity(
     name,
     since: new Date(now.getTime() - 90 * DAY).toISOString(),
   });
-  const error = response.errors[0];
-  if (error || !response.data)
-    throw new GitHubError(
-      200,
-      `GitHub GraphQL: ${error?.message ?? "no data"}`,
-    );
-  return response.data;
 }
 
 function median(values: number[]): number | null {
@@ -174,10 +168,13 @@ export function summarizeActivity(
     backlog: share(open + (opened - open) * botShare, opened),
     medianHandleDays:
       handleDays.length >= MIN_SAMPLE ? median(handleDays) : null,
+    // No outside issues leaves none unanswered; a few are too few to judge.
     unansweredShare:
-      outsideIssues.length >= MIN_SAMPLE
-        ? share(unanswered, outsideIssues.length)
-        : null,
+      outsideIssues.length === 0
+        ? 0
+        : outsideIssues.length >= MIN_SAMPLE
+          ? share(unanswered, outsideIssues.length)
+          : null,
     medianMergeDays: mergeDays.length >= MIN_SAMPLE ? median(mergeDays) : null,
     oldOpenShare: share(raw.oldOpen.issueCount, openItems),
     committers90d: new Set(authors).size,

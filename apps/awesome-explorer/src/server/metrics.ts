@@ -141,11 +141,13 @@ export type Lookup =
   | { status: "found"; raw: RawRepository }
   | Exclude<MetricsResult, { status: "found" }>;
 
-// GitHub nulls a node it will not show (a deleted author, a hidden issue)
-// rather than failing the query, so data of an unexpected shape fails only the
-// repository it belongs to instead of stalling every batch behind it. So does a
-// star history or activity query GitHub refuses.
-/** Finishes a looked-up repository with its star history and activity. */
+/**
+ * Finishes a looked-up repository with its star history and activity. GitHub
+ * nulls a node it will not show (a deleted author, a hidden issue) rather than
+ * failing the query, so data of an unexpected shape fails only the repository
+ * it belongs to instead of stalling the queue. So does a star history or
+ * activity query GitHub refuses.
+ */
 export async function completeMetrics(
   github: Pick<GitHub, "graphql" | "starHistory">,
   lookup: Lookup,

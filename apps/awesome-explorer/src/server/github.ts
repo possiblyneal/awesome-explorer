@@ -166,3 +166,19 @@ export class GitHub {
     return { data: body.data, errors };
   }
 }
+
+/** The query's data, refusing any GraphQL error, since partial data looks like real zeros. */
+export async function graphqlData<T>(
+  github: Pick<GitHub, "graphql">,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<T> {
+  const response = await github.graphql<T>(query, variables);
+  const error = response.errors[0];
+  if (error || !response.data)
+    throw new GitHubError(
+      200,
+      `GitHub GraphQL: ${error?.message ?? "no data"}`,
+    );
+  return response.data;
+}
