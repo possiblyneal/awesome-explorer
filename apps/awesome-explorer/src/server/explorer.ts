@@ -13,7 +13,12 @@ import type {
 import { INDEX_LIST, STARS_LIST } from "../shared/index-list.ts";
 import { RateLimitError, type GitHub } from "./github.ts";
 import { assessHealth } from "./health.ts";
-import { BATCH_SIZE, fetchMetrics, type MetricsResult } from "./metrics.ts";
+import {
+  BATCH_SIZE,
+  fetchMetrics,
+  repositoryLookups,
+  type MetricsResult,
+} from "./metrics.ts";
 import { countOutboundLinks, parseAwesomeList } from "./readme.ts";
 import type { Cached, Store } from "./store.ts";
 import { fetchTrending } from "./trending.ts";
@@ -30,8 +35,10 @@ const RETRY_AFTER_ERROR = 60_000;
 const MIN_LIST_LINKS = 50;
 /** README fetches in flight at once while vetting discovery candidates. */
 const README_CONCURRENCY = 10;
-/** Repositories per social preview query. */
+/** Repositories per social preview query; a live batch of 100 came back whole. */
 const PREVIEW_BATCH_SIZE = 100;
+/** Longest trending waits on social previews before showing cards without them. */
+const PREVIEW_TIMEOUT = 15_000;
 
 export class NotFoundError extends Error {}
 
@@ -121,39 +128,58 @@ export class Explorer {
   /**
    * Fills in each repository's uploaded social preview, once per trending
    * refresh. GitHub's generated card is not a preview; a failed batch or a
-   * repository GitHub no longer has leaves its image null.
+   * repository GitHub no longer has leaves its image null, and a lookup still
+   * running after `PREVIEW_TIMEOUT` leaves the rest null.
    */
   async #withPreviews(repos: TrendingRepo[]): Promise<TrendingRepo[]> {
     const images = new Map<string, string>();
-    for (let start = 0; start < repos.length; start += PREVIEW_BATCH_SIZE) {
-      const batch = repos.slice(start, start + PREVIEW_BATCH_SIZE);
-      const lookups = batch.map((repo, index) => {
-        const [owner, name] = repo.repo.split("/");
-        return `r${index}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { openGraphImageUrl usesCustomOpenGraphImage }`;
-      });
-      try {
-        const { data } = await this.#github.graphql<
-          Record<
-            string,
-            {
-              openGraphImageUrl: string;
-              usesCustomOpenGraphImage: boolean;
-            } | null
-          >
-        >(`query {\n${lookups.join("\n")}\n}`, {});
-        batch.forEach((repo, index) => {
-          const preview = data?.[`r${index}`];
-          if (preview?.usesCustomOpenGraphImage)
-            images.set(repo.repo, preview.openGraphImageUrl);
-        });
-      } catch {
-        // A failed lookup only costs those repositories their image.
-      }
-    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      this.#lookUpPreviews(repos, images),
+      new Promise((resolve) => (timer = setTimeout(resolve, PREVIEW_TIMEOUT))),
+    ]);
+    clearTimeout(timer);
     return repos.map((repo) => ({
       ...repo,
       image: images.get(repo.repo) ?? null,
     }));
+  }
+
+  /** Every batch at once: one takes about 3.5s, so in turn they outlast the timeout. */
+  async #lookUpPreviews(
+    repos: TrendingRepo[],
+    images: Map<string, string>,
+  ): Promise<void> {
+    const batches = [];
+    for (let start = 0; start < repos.length; start += PREVIEW_BATCH_SIZE)
+      batches.push(repos.slice(start, start + PREVIEW_BATCH_SIZE));
+    await Promise.all(
+      batches.map(async (batch) => {
+        const lookups = repositoryLookups(
+          batch.map((repo) => repo.repo),
+          "{ openGraphImageUrl usesCustomOpenGraphImage }",
+        );
+        try {
+          const { data } = await this.#github.graphql<
+            Record<
+              string,
+              {
+                openGraphImageUrl: string;
+                usesCustomOpenGraphImage: boolean;
+              } | null
+            >
+          >(`query {\n${lookups}\n}`, {});
+          batch.forEach((repo, index) => {
+            const preview = data?.[`r${index}`];
+            if (preview?.usesCustomOpenGraphImage)
+              images.set(repo.repo, preview.openGraphImageUrl);
+          });
+        } catch {
+          // A failed lookup, a rate limit included, only costs those
+          // repositories their image.
+        }
+      }),
+    );
   }
 
   /** Hides a repository from trending for good. */

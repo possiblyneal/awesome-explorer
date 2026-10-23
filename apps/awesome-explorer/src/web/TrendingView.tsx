@@ -17,6 +17,11 @@ interface Hidden {
   action: HideAction;
 }
 
+/** `card` back at `index`, or last when the list has since shrunk. */
+function insert(repos: TrendingRepo[], index: number, card: TrendingRepo) {
+  return repos.toSpliced(Math.min(index, repos.length), 0, card);
+}
+
 function RepoIcon() {
   return (
     <svg
@@ -165,20 +170,22 @@ export function TrendingView() {
     return () => observer.disconnect();
   }, [more, shown]);
 
+  // Both act on the list at the click, before the request, so a card's index
+  // always counts only the cards on screen.
   async function hide(repo: string, action: HideAction) {
     const index = repos?.findIndex((r) => r.repo === repo) ?? -1;
     const card = repos?.[index];
     if (!card) return;
+    setError(undefined);
+    setRepos((current) => current?.filter((r) => r.repo !== repo));
+    setHidden({ card, index, action });
+    window.clearTimeout(undoTimer.current);
+    undoTimer.current = window.setTimeout(() => setHidden(undefined), UNDO_FOR);
     try {
       await hideTrending(repo, action);
-      setRepos((current) => current?.filter((r) => r.repo !== repo));
-      setHidden({ card, index, action });
-      window.clearTimeout(undoTimer.current);
-      undoTimer.current = window.setTimeout(
-        () => setHidden(undefined),
-        UNDO_FOR,
-      );
     } catch (reason) {
+      setRepos((current) => current && insert(current, index, card));
+      setHidden(undefined);
       setError((reason as Error).message);
     }
   }
@@ -188,12 +195,12 @@ export function TrendingView() {
     const { card, index } = hidden;
     window.clearTimeout(undoTimer.current);
     setHidden(undefined);
+    setError(undefined);
+    setRepos((current) => current && insert(current, index, card));
     try {
       await restoreTrending(card.repo);
-      setRepos((current) =>
-        current?.toSpliced(Math.min(index, current.length), 0, card),
-      );
     } catch (reason) {
+      setRepos((current) => current?.filter((r) => r.repo !== card.repo));
       setError((reason as Error).message);
     }
   }

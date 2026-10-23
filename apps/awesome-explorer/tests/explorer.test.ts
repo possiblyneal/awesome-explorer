@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Explorer } from "../src/server/explorer.ts";
 import type { GitHub, SearchItem } from "../src/server/github.ts";
 import { Store } from "../src/server/store.ts";
@@ -176,6 +176,23 @@ describe("Explorer.trending", () => {
       return { data: {}, errors: [] };
     }).trending();
     expect(queries).toHaveLength(2);
+  });
+
+  it("returns trending without images when the lookup hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      const result = explorer(
+        [],
+        [trend("acme/new", 1)],
+        () => new Promise(() => {}),
+      ).trending();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect((await result).map((r) => [r.repo, r.image])).toEqual([
+        ["acme/new", null],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("still returns trending, without images, when the lookup fails", async () => {
