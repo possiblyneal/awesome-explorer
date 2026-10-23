@@ -63,13 +63,18 @@ fragment Metrics on Repository {
   mergedPullRequests: pullRequests(states: MERGED) { totalCount }
 }`;
 
-/** One aliased `repository` lookup per name: r0, r1, … in the order given. */
+/** One aliased `repository` lookup per name, selecting `selection`: r0, r1, … in the order given. */
+export function repositoryLookups(repos: string[], selection: string): string {
+  return repos
+    .map((repo, index) => {
+      const [owner, name] = repo.split("/");
+      return `r${index}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) ${selection}`;
+    })
+    .join("\n");
+}
+
 export function buildQuery(repos: string[]): string {
-  const lookups = repos.map((repo, index) => {
-    const [owner, name] = repo.split("/");
-    return `r${index}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ...Metrics }`;
-  });
-  return `query($since: GitTimestamp!) {\n${lookups.join("\n")}\n}\n${FRAGMENT}`;
+  return `query($since: GitTimestamp!) {\n${repositoryLookups(repos, "{ ...Metrics }")}\n}\n${FRAGMENT}`;
 }
 
 function median(values: number[]): number | null {

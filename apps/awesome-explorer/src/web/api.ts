@@ -28,6 +28,13 @@ export function fetchTrending(): Promise<TrendingRepo[]> {
   return getJson("/api/trending");
 }
 
+/** Undoes a dismissal or snooze. */
+export async function restoreTrending(repo: string): Promise<void> {
+  const response = await fetch(`/api/trending/${repo}`, { method: "DELETE" });
+  if (!response.ok)
+    throw new Error(`undo failed: ${response.status} ${response.statusText}`);
+}
+
 /** Hides a trending repository for good (`dismiss`) or for 30 days (`snooze`). */
 export async function hideTrending(
   repo: string,

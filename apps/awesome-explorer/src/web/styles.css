@@ -245,3 +245,190 @@ button.link {
 .chip-new {
   color: var(--rising);
 }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 8px;
+}
+
+@media (max-width: 1000px) {
+  .card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sentinel {
+  height: 1px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.card:hover {
+  text-decoration: none;
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 14%);
+}
+
+.card-hero {
+  --lang: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 2 / 1;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--lang) 35%, var(--panel)),
+    color-mix(in srgb, var(--lang) 8%, var(--panel))
+  );
+}
+
+.card-hero img {
+  /* 28% of a 2:1 hero's width is 56% of its height; a percentage height
+     cannot resolve against a height that only aspect-ratio sets. */
+  width: 28%;
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 3px solid var(--panel);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 20%);
+  background: var(--panel);
+}
+
+.card-hero img.card-social {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 1;
+  object-fit: cover;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 8px;
+  padding: 12px 14px 14px;
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 15px;
+}
+
+.repo-icon {
+  flex: none;
+  color: var(--muted);
+}
+
+.card-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-description {
+  margin: 0;
+  flex: 1;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  min-height: 4.5em;
+  line-height: 1.5;
+}
+
+.card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.card-language {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.card-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.card-button {
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.card-button:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.undo-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 20%);
+  font-size: 14px;
+}
+
+.undo-bar button {
+  color: var(--link);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-weight: 600;
+}

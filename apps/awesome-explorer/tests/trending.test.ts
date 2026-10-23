@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { fetchTrending, parseTrending } from "../src/server/trending.ts";
 
-function row(repo: string, gained: string, period = "this week"): string {
+function row(
+  repo: string,
+  gained: string,
+  period = "this week",
+  language = '<span class="repo-language-color" style="background-color: #3572A5"></span>\n<span itemprop="programmingLanguage">C++</span>',
+): string {
   return `<article class="Box-row">
 <h2 class="h3 lh-condensed">
 <a data-hydro-click="{}" href="/${repo}" class="Link"><svg></svg>
@@ -10,7 +15,7 @@ function row(repo: string, gained: string, period = "this week"): string {
 Builds &amp; ships <b>things</b> &amp;lt;3.
 </p>
 <div class="f6 color-fg-muted mt-2">
-<span itemprop="programmingLanguage">C++</span>
+${language}
 <a href="/${repo}/stargazers" class="Link"><svg aria-label="star"><path d="M8"></path>
 </svg>
 9,045</a>
@@ -27,10 +32,16 @@ describe("parseTrending", () => {
         repo: "juce-framework/JUCE",
         description: "Builds & ships things &lt;3.",
         language: "C++",
+        languageColor: "#3572A5",
         stars: 9045,
         gained: 1081,
       },
     ]);
+  });
+
+  it("has no language or color for a repository without a language", () => {
+    const [parsed] = parseTrending(row("a/b", "5", "this week", ""));
+    expect(parsed).toMatchObject({ language: null, languageColor: null });
   });
 });
 
@@ -54,6 +65,18 @@ describe("fetchTrending", () => {
       ["c/monthly", 20],
     ]);
     expect(repos[1]!.gained).toEqual({ daily: 50, weekly: 70 });
+  });
+
+  it("keeps the first language color seen when merging rows", async () => {
+    const repos = await fetchTrending(async (url) => {
+      if (url.includes("since=daily"))
+        return row("a/b", "5", "today", "").replace(
+          "</article>",
+          '<span class="repo-language-color" style="background-color: #111111"></span><span itemprop="programmingLanguage">Go</span></article>',
+        );
+      return row("a/b", "7");
+    });
+    expect(repos[0]!.languageColor).toBe("#111111");
   });
 
   it("ranks the pages that loaded when others fail", async () => {
