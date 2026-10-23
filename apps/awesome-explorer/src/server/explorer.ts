@@ -216,8 +216,9 @@ export class Explorer {
 
   /**
    * Each repository's stars per day over the last 7 days, from its star
-   * history, refetched when 6 hours old or from a past UTC day. A failed or missing history leaves
-   * the repository uncached, and a rate limit stops the lookups still to come.
+   * history, refetched when 6 hours old or from a past UTC day. A failed or
+   * missing history leaves the repository uncached, and a rate limit stops
+   * the lookups still to come.
    */
   async #lookUpStarRates(repos: TrendingRepo[]): Promise<void> {
     const now = Date.now();
