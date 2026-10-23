@@ -184,8 +184,14 @@ export function TrendingView() {
     try {
       await hideTrending(repo, action);
     } catch (reason) {
-      setRepos((current) => current && insert(current, index, card));
-      setHidden(undefined);
+      // An undo may already have put the card back, and a later hide owns
+      // whatever bar is showing now.
+      setRepos((current) =>
+        current && !current.some((r) => r.repo === repo)
+          ? insert(current, index, card)
+          : current,
+      );
+      setHidden((shown) => (shown?.card.repo === repo ? undefined : shown));
       setError((reason as Error).message);
     }
   }
