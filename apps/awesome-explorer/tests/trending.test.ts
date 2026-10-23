@@ -55,4 +55,20 @@ describe("fetchTrending", () => {
     ]);
     expect(repos[1]!.gained).toEqual({ daily: 50, weekly: 70 });
   });
+
+  it("ranks the pages that loaded when others fail", async () => {
+    const repos = await fetchTrending(async (url) => {
+      if (url.includes("since=daily")) throw new Error("429");
+      return row("b/weekly", "700");
+    });
+    expect(repos.map((r) => r.repo)).toEqual(["b/weekly"]);
+  });
+
+  it("fails when every page fails", async () => {
+    await expect(
+      fetchTrending(async () => {
+        throw new Error("down");
+      }),
+    ).rejects.toThrow("down");
+  });
 });

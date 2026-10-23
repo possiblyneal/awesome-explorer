@@ -26,6 +26,8 @@ describe("parseAwesomeList", () => {
   const readme = [
     "# Awesome Things [![Awesome](https://awesome.re/badge.svg)](https://awesome.re)",
     "",
+    "> A curated list. Inspired by [awesome-python](https://github.com/vinta/awesome-python).",
+    "",
     "Built by [me](https://github.com/me/awesome-things) with help from https://github.com/x/prose.",
     "",
     "## Contents",
@@ -59,7 +61,7 @@ describe("parseAwesomeList", () => {
 
   const entries = parseAwesomeList(readme, "me/awesome-things");
 
-  it("finds list items, quoted items, and table rows, in order, once each", () => {
+  it("finds list items, quoted items, and table rows, in order, once each, skipping quoted prose", () => {
     expect(entries.map((e) => e.repo)).toEqual([
       "acme/alpha",
       "acme/beta",
@@ -103,7 +105,8 @@ describe("countOutboundLinks", () => {
       "[Cyber](https://github.com/a/cyber) | table row without a pipe first",
       '<a href="https://example.com/tool">Tool</a> and <https://example.org>',
       "- [Again](https://github.com/a/cyber/) and [Own](https://github.com/Acme/List#readme)",
+      "[Own file](https://github.com/acme/list/blob/main/a.md) and [Sibling](https://github.com/acme/list-tools)",
     ].join("\n");
-    expect(countOutboundLinks(markdown, "acme/list")).toBe(4);
+    expect(countOutboundLinks(markdown, "acme/list")).toBe(5);
   });
 });

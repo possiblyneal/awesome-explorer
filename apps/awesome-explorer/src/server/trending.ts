@@ -91,7 +91,8 @@ async function fetchPage(url: string): Promise<string> {
 
 /**
  * Every followed trending page merged, one row per repository, ranked by its
- * best stars gained per day across the periods it trends in.
+ * best stars gained per day across the periods it trends in. Pages that fail
+ * to load are left out.
  */
 export async function fetchTrending(
   load: (url: string) => Promise<string> = fetchPage,
@@ -105,11 +106,17 @@ export async function fetchTrending(
     ),
   );
   const byRepo = new Map<string, TrendingRepo>();
+  const failures: unknown[] = [];
   for (let start = 0; start < pages.length; start += CONCURRENCY) {
     const batch = pages.slice(start, start + CONCURRENCY);
-    const htmls = await Promise.all(batch.map((page) => load(page.url)));
+    const htmls = await Promise.allSettled(batch.map((page) => load(page.url)));
     batch.forEach(({ period }, index) => {
-      for (const row of parseTrending(htmls[index]!)) {
+      const html = htmls[index]!;
+      if (html.status === "rejected") {
+        failures.push(html.reason);
+        return;
+      }
+      for (const row of parseTrending(html.value)) {
         const key = row.repo.toLowerCase();
         const merged = byRepo.get(key) ?? {
           repo: row.repo,
@@ -128,5 +135,7 @@ export async function fetchTrending(
       }
     });
   }
+  // One failed page only thins the ranking; every page failing is an outage.
+  if (failures.length === pages.length) throw failures[0];
   return [...byRepo.values()].sort((a, b) => b.starsPerDay - a.starsPerDay);
 }

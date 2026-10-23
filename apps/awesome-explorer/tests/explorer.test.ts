@@ -44,7 +44,10 @@ function explorer(
   trending: TrendingRepo[] = [],
 ): Explorer {
   const github = {
-    readme: async (repo: string) => READMES[repo] ?? null,
+    readme: async (repo: string) => {
+      if (repo === "acme/blocked") throw new Error("451 Unavailable");
+      return READMES[repo] ?? null;
+    },
     searchRepositories: async () => search,
     starred: async () => [
       { full_name: "acme/starred", name: "starred", description: null },
@@ -71,11 +74,12 @@ describe("Explorer.discover", () => {
       ["acme/awesome-unlisted", false],
     ]);
   });
-  it("leaves out repositories whose README links to too little to be a list", async () => {
+  it("leaves out repositories whose README links to too little, or cannot be read", async () => {
     const lists = await explorer([
       item("acme/awesome-unlisted", 10),
       item("acme/product", 500),
       item("acme/no-readme", 400),
+      item("acme/blocked", 300),
     ]).discover("");
     expect(lists.map((list) => list.repo)).toEqual(["acme/awesome-unlisted"]);
   });

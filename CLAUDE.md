@@ -57,7 +57,7 @@ Single operator (see `GLOSSARY.md`). One unit, `apps/awesome-explorer`, run long
 
 - The root `package.json` is an npm workspace over `apps/awesome-explorer`; its scripts delegate to the member, which is what `scripts/check` runs.
 - The GitHub token comes from `GITHUB_TOKEN` or `gh auth token` at startup. Never commit or log it.
-- Runtime data lives in `apps/awesome-explorer/state/` (gitignored SQLite cache); deleting it only costs a refetch.
+- Runtime data lives in `apps/awesome-explorer/state/` (gitignored SQLite): the GitHub cache plus the operator's trending dismissals and snoozes. Deleting it refetches the cache and forgets every dismissal.
 
 ## Work Guidance
 

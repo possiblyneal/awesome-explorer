@@ -49,7 +49,7 @@ export function TrendingView() {
         )}
       </div>
       {error && <p className="error">{error}</p>}
-      {!repos && !error && <p className="muted">Reading 48 trending pages…</p>}
+      {!repos && !error && <p className="muted">Reading the trending pages…</p>}
       {repos && repos.length === 0 && (
         <p className="muted">Nothing new is trending.</p>
       )}

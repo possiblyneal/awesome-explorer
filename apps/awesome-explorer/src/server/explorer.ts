@@ -92,9 +92,7 @@ export class Explorer {
 
   /** The operator's starred repositories, explored like a list's entries. */
   stars(): Promise<ListView> {
-    return this.#view(STARS_LIST, () =>
-      this.#load(STARS_LIST, STARS_FRESH_FOR, () => this.#fetchStars()),
-    );
+    return this.#view(STARS_LIST, () => this.#loadStars());
   }
 
   /** Trending repositories the operator has not starred, dismissed, or snoozed. */
@@ -109,7 +107,7 @@ export class Explorer {
     }
     const [repos, stars] = await Promise.all([
       this.#trending.repos,
-      this.#load(STARS_LIST, STARS_FRESH_FOR, () => this.#fetchStars()),
+      this.#loadStars(),
     ]);
     const hidden = this.#store.getDismissed(Date.now());
     for (const entry of stars.value) hidden.add(entry.repo.toLowerCase());
@@ -186,7 +184,7 @@ export class Explorer {
     return [...byName.values()]
       .filter((item) => {
         const key = item.full_name.toLowerCase();
-        return indexed.has(key) || links.get(key)! >= MIN_LIST_LINKS;
+        return indexed.has(key) || (links.get(key) ?? 0) >= MIN_LIST_LINKS;
       })
       .sort((a, b) => b.stargazers_count - a.stargazers_count)
       .map((item) => ({
@@ -199,7 +197,10 @@ export class Explorer {
       }));
   }
 
-  /** Each repository's README link count, refetched when a day old; no README counts as none. */
+  /**
+   * Each repository's README link count, refetched when a day old; no README
+   * counts as none, and an unreadable one keeps its stale count or is left out.
+   */
   async #readmeLinks(keys: string[]): Promise<Map<string, number>> {
     const counts = new Map<string, number>();
     const stale: string[] = [];
@@ -212,10 +213,17 @@ export class Explorer {
     for (let start = 0; start < stale.length; start += README_CONCURRENCY) {
       await Promise.all(
         stale.slice(start, start + README_CONCURRENCY).map(async (key) => {
-          const readme = await this.#github.readme(key);
-          const count = readme === null ? 0 : countOutboundLinks(readme, key);
-          this.#store.putReadmeLinks(key, count, Date.now());
-          counts.set(key, count);
+          try {
+            const readme = await this.#github.readme(key);
+            const count = readme === null ? 0 : countOutboundLinks(readme, key);
+            this.#store.putReadmeLinks(key, count, Date.now());
+            counts.set(key, count);
+          } catch (error) {
+            if (error instanceof RateLimitError) throw error;
+            // One unreadable README drops that candidate, not the search.
+            const cached = this.#store.getReadmeLinks(key);
+            if (cached) counts.set(key, cached.value);
+          }
         }),
       );
     }
@@ -229,17 +237,21 @@ export class Explorer {
     );
   }
 
+  #loadStars(): Promise<Cached<ListEntry[]> & { error?: string }> {
+    return this.#load(STARS_LIST, STARS_FRESH_FOR, () => this.#fetchStars());
+  }
+
   async #load(
     key: string,
     freshFor: number,
-    fetch: () => Promise<ListEntry[]>,
+    fetchEntries: () => Promise<ListEntry[]>,
   ): Promise<Cached<ListEntry[]> & { error?: string }> {
     const cached = this.#store.getList(key);
     if (cached && Date.now() - cached.fetchedAt < freshFor) return cached;
 
     let load = this.#listLoads.get(key);
     if (!load) {
-      load = this.#fetchAndStore(key, fetch).finally(() =>
+      load = this.#fetchAndStore(key, fetchEntries).finally(() =>
         this.#listLoads.delete(key),
       );
       this.#listLoads.set(key, load);
@@ -257,9 +269,9 @@ export class Explorer {
 
   async #fetchAndStore(
     key: string,
-    fetch: () => Promise<ListEntry[]>,
+    fetchEntries: () => Promise<ListEntry[]>,
   ): Promise<Cached<ListEntry[]>> {
-    const list = { value: await fetch(), fetchedAt: Date.now() };
+    const list = { value: await fetchEntries(), fetchedAt: Date.now() };
     this.#store.putList(key, list.value, list.fetchedAt);
     return list;
   }

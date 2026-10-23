@@ -41,7 +41,10 @@ const MARKDOWN_LINK =
   /\[((?:[^[\]]|\[[^\]]*\])*)\]\(\s*<?(https?:\/\/[^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
 const HTML_LINK =
   /<a\s[^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-const ITEM_LINE = /^\s*(?:[-*+]\s|\d+[.)]\s|>|\||<li|<td|<tr)/i;
+// A quoted line counts only when an item or a link opens it, so a blockquote
+// tagline that mentions other lists stays prose.
+const ITEM_LINE =
+  /^\s*(?:[-*+]\s|\d+[.)]\s|>\s*(?:[-*+]\s|\d+[.)]\s|\**\[)|\||<li|<td|<tr)/i;
 // A table's divider row; the rows under it need not start with a pipe.
 const TABLE_DIVIDER = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
 const HEADING = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/;
@@ -177,9 +180,11 @@ export function countOutboundLinks(markdown: string, repo: string): number {
   for (const match of markdown.matchAll(OUTBOUND_LINK)) {
     const url = (match[1] ?? match[2] ?? match[3])!
       .toLowerCase()
+      .replace(/^https?:\/\/(?:www\.)?/, "")
       .replace(/[#?].*$/, "")
       .replace(/\/$/, "");
-    if (url.includes(own) || IMAGE_URL.test(url)) continue;
+    if (url === own || url.startsWith(`${own}/`) || IMAGE_URL.test(url))
+      continue;
     targets.add(url);
   }
   return targets.size;
