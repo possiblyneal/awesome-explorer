@@ -1,0 +1,27 @@
+[Unit]
+Description=Awesome Explorer: awesome lists, stars and trending, on the LAN
+Documentation=https://github.com/possiblyneal/awesome-explorer
+
+# A permanent failure (a port already taken, a broken build) leaves the unit
+# failed and visible rather than retrying forever.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# Runs from the main checkout on dev, so `git pull` then a restart deploys:
+# the build runs on every start. The checkout's gitignored .env and state/
+# (the GitHub cache, trending dismissals) stay with it.
+WorkingDirectory=%h/code/awesome-explorer/apps/awesome-explorer
+Environment=HOST=0.0.0.0 PORT=4321
+# The token comes from `gh auth token` at startup; gh reads ~/.config/gh.
+ExecStartPre=/usr/bin/npm run build
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=5
+
+# No authentication: the LAN is the boundary. Give out https://awesome-explorer.lan,
+# which Traefik on server ends TLS for and forwards to this port.
+
+[Install]
+WantedBy=default.target

@@ -6,6 +6,8 @@ The explorer app: an Express server that reads awesome lists, the operator's sta
 
 Single operator. Runs longlived (`.unit.json`), started by `scripts/run`, which runs `npm run dev`; `npm start` serves the built UI in production.
 
+Hosted on `dev` as the systemd user unit `deploy/systemd/awesome-explorer.service` (copied to `~/.config/systemd/user/`, enabled, linger on), running `npm run build` then `npm start` from the main checkout `~/code/awesome-explorer` on `0.0.0.0:4321`. Deploy is `git pull` there, then `systemctl --user restart awesome-explorer`; a changed unit file is copied again and needs `daemon-reload`. The LAN address is `https://awesome-explorer.lan`, routed by the homelab's Traefik on `server`, and Glance's Services page links it.
+
 ## Local Contracts
 
 - Layout:
