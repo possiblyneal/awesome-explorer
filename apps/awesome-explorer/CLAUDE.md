@@ -4,12 +4,11 @@ The explorer app: an Express server that reads awesome lists, the operator's sta
 
 ## Ownership
 
-Single operator. Runs longlived (`.unit.json`), started by `scripts/run`, which runs `npm run dev`; `npm start` serves the built UI in production.
-
-Hosted on `dev` as the systemd user unit `deploy/systemd/awesome-explorer.service` (copied to `~/.config/systemd/user/`, enabled, linger on), running `npm run build` then `npm start` from the main checkout `~/code/awesome-explorer` on `0.0.0.0:4321`. Deploy is `git pull` there, then `systemctl --user restart awesome-explorer`; a changed unit file is copied again and needs `daemon-reload`. The LAN address is `https://awesome-explorer.lan`, routed by the homelab's Traefik on `server`, and Glance's Services page links it.
+Single operator. Runs longlived (`.unit.json`), started by `scripts/run`, which runs `npm run dev`; `npm start` serves the built UI in production. Hosted on `dev` as a systemd user unit (Local Contracts).
 
 ## Local Contracts
 
+- Hosted on `dev` as the systemd user unit `deploy/systemd/awesome-explorer.service` (copied to `~/.config/systemd/user/`, enabled, linger on), running `npm run build` then `npm start` from the main checkout `~/code/awesome-explorer` on `0.0.0.0:4321`. Deploy is `git pull && npm ci` at that checkout's root, then `systemctl --user restart awesome-explorer` (the unit builds but never installs, so skipping `npm ci` after a dependency change builds on stale modules); a changed unit file is copied again and needs `daemon-reload`. No login: any LAN host can star and unstar on the operator's GitHub account and dismiss or snooze trending, by the operator's decision (the LAN is trusted). The LAN address is `https://awesome-explorer.lan`, routed by the homelab's Traefik on `server`, and Glance's Services page links it.
 - Layout:
   - `src/server/` — Node only. `github.ts` (fetch client, classifies rate limits vs refusals), `readme.ts` (list parsing, outbound link count), `metrics.ts` (GraphQL batch lookups, then each repository's star history and activity), `activity.ts` (per-repository issue and pull request searches: backlog, handle and merge times, unanswered and old open shares, committers), `star-lists.ts` (the operator's star lists), `health.ts` (labels and score), `store.ts` (SQLite: cached lists, metrics, README link counts, translations, plus trending dismissals, which are operator data and not a cache), `trending.ts` (trending page scraping and ranking), `translate.ts` (MyMemory client), `explorer.ts` (refresh queue, discovery), `config.ts`, `main.ts` (routes, Vite middleware in dev).
   - `src/web/` — browser only, built by Vite into `dist/web/`.

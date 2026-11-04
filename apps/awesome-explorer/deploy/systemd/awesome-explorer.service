@@ -9,8 +9,8 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-# Runs from the main checkout on dev, so `git pull` then a restart deploys:
-# the build runs on every start. The checkout's gitignored .env and state/
+# Runs from the main checkout on dev, so `git pull && npm ci` then a restart
+# deploys: the build runs on every start, the install does not. The checkout's gitignored .env and state/
 # (the GitHub cache, trending dismissals) stay with it.
 WorkingDirectory=%h/code/awesome-explorer/apps/awesome-explorer
 Environment=HOST=0.0.0.0 PORT=4321
@@ -20,7 +20,8 @@ ExecStart=/usr/bin/npm start
 Restart=on-failure
 RestartSec=5
 
-# No authentication: the LAN is the boundary. Give out https://awesome-explorer.lan,
+# No authentication: the LAN is the boundary, so any LAN host can star and
+# unstar on the operator's GitHub account (the operator's decision). Give out https://awesome-explorer.lan,
 # which Traefik on server ends TLS for and forwards to this port.
 
 [Install]
