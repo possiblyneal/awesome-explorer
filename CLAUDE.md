@@ -56,6 +56,7 @@ Single operator (see `GLOSSARY.md`). One unit, `apps/awesome-explorer`, run long
 ## Local Contracts
 
 - The root `package.json` is an npm workspace over `apps/awesome-explorer`; its scripts delegate to the member, which is what `scripts/check` runs.
+- The root `overrides` pins `minimatch` to `^11.0.1` (GHSA-g3hv-75wg-m249) because eslint and typescript-eslint still ask for `^10`; drop it once they take 11.
 - The GitHub token comes from `GITHUB_TOKEN` or `gh auth token` at startup. Never commit or log it.
 - Runtime data lives in `apps/awesome-explorer/state/` (gitignored SQLite): the GitHub cache plus the operator's trending dismissals and snoozes. Deleting it refetches the cache and forgets every dismissal.
 
