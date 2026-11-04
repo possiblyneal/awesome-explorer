@@ -13,7 +13,8 @@ import { Store } from "./store.ts";
 import { fetchTrending } from "./trending.ts";
 import { translateToEnglish } from "./translate.ts";
 
-const NAME = /^[\w.-]+$/;
+// Dots alone would walk GitHub's URL path, e.g. a star PUT to /user/x.
+const NAME = /^(?!\.+$)[\w.-]+$/;
 const unitRoot = `${import.meta.dirname}/../..`;
 
 const config = await loadConfig();

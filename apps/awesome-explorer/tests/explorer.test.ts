@@ -276,7 +276,10 @@ describe("Explorer.setStarred", () => {
       readme: async (repo: string) => READMES[repo] ?? null,
       starred: async () => {
         starredReads++;
-        return [{ full_name: "acme/one", name: "one", description: null }];
+        return [
+          { full_name: "acme/one", name: "one", description: null },
+          { full_name: "Acme/Starred", name: "Starred", description: null },
+        ];
       },
       graphql: async (query: string) =>
         query.includes("viewer") ? STAR_LISTS : new Promise(() => {}),
@@ -309,16 +312,22 @@ describe("Explorer.setStarred", () => {
 
     await app.setStarred("acme/two", true);
     await app.setStarred("acme/one", false);
+    // Starring again keeps the entry and its star lists.
+    await app.setStarred("acme/starred", true);
     expect(calls).toEqual([
       ["acme/two", true],
       ["acme/one", false],
+      ["acme/starred", true],
     ]);
     expect(await starredIn()).toEqual([
       ["acme/one", false],
       ["acme/two", true],
     ]);
-    expect((await app.stars()).entries.map((entry) => entry.repo)).toEqual([
-      "acme/two",
+    expect(
+      (await app.stars()).entries.map((entry) => [entry.repo, entry.lists]),
+    ).toMatchObject([
+      ["acme/two", []],
+      ["Acme/Starred", ["Tools"]],
     ]);
     expect(starredReads).toBe(1);
   });

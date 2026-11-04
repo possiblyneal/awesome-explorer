@@ -440,21 +440,20 @@ export function ListView({ repo }: { repo: string }) {
   );
   const [starError, setStarError] = useState<string>();
 
-  async function star(repo: string, starred: boolean) {
-    const key = repo.toLowerCase();
-    const override = (value: boolean | undefined) =>
-      setStarOverrides((current) => {
-        const next = new Map(current);
-        if (value === undefined) next.delete(key);
-        else next.set(key, value);
-        return next;
-      });
-    override(starred);
+  async function star(target: string, starred: boolean) {
+    const key = target.toLowerCase();
+    setStarOverrides((current) => new Map(current).set(key, starred));
     setStarError(undefined);
     try {
-      await setStarred(repo, starred);
+      await setStarred(target, starred);
     } catch (reason) {
-      override(undefined);
+      // A later click on the same row owns the override now; leave it.
+      setStarOverrides((current) => {
+        if (current.get(key) !== starred) return current;
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      });
       setStarError((reason as Error).message);
     }
   }
@@ -462,7 +461,8 @@ export function ListView({ repo }: { repo: string }) {
   const entries = useMemo(
     () =>
       (data?.entries ?? []).map((entry) => {
-        const starred = starOverrides.get(entry.repo.toLowerCase());
+        const repo = entry.metrics?.repo ?? entry.repo;
+        const starred = starOverrides.get(repo.toLowerCase());
         return starred === undefined ? entry : { ...entry, starred };
       }),
     [data, starOverrides],

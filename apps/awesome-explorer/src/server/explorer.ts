@@ -122,7 +122,7 @@ export class Explorer {
   #slotFreed: (() => void) | undefined;
   #listLoads = new Map<string, Promise<Cached<ListEntry[]>>>();
   /** The last failed refresh of a list served stale meanwhile, by list key. */
-  #listErrors = new Map<string, { message: string; at: number }>();
+  #listErrors = new Map<string, { error: Error; at: number }>();
   #discoveries = new Map<
     string,
     { at: number; lists: Promise<DiscoveredList[]> }
@@ -323,12 +323,24 @@ export class Explorer {
   /** Stars or unstars a repository on GitHub, and updates the cached stars to match. */
   async setStarred(repo: string, starred: boolean): Promise<void> {
     await this.#github.setStarred(repo, starred);
+    this.#applyStar(repo, starred);
+    // A refresh that read the stars before this change would store it undone.
+    this.#listLoads.get(STARS_LIST)?.then(
+      () => this.#applyStar(repo, starred),
+      () => {},
+    );
+  }
+
+  /** Adds or removes one repository in the cached stars, keeping `fetchedAt`. */
+  #applyStar(repo: string, starred: boolean): void {
     const cached = this.#store.getList(STARS_LIST);
     if (!cached) return;
     const key = repo.toLowerCase();
     const others = cached.value.filter(
       (entry) => entry.repo.toLowerCase() !== key,
     );
+    // Already as asked: keep the entry, its star lists and place included.
+    if (starred === others.length < cached.value.length) return;
     const hit = this.#store.getMetrics([key]).get(key)?.value;
     const metrics = hit?.status === "found" ? hit.metrics : undefined;
     const entry: ListEntry = {
@@ -366,8 +378,14 @@ export class Explorer {
     const keys = entries.map((entry) => entry.repo.toLowerCase());
     const cached = this.#store.getMetrics(keys);
     const stars = this.#store.getList(STARS_LIST);
-    // Before the stars are first read, a list learns them on its next read.
-    if (!stars) this.#loadStars().catch(() => {});
+    // Before the stars are first read, a list learns them on its next read;
+    // a failed first read waits out RETRY_AFTER_ERROR like a failed refresh.
+    const starsFailed = this.#listErrors.get(STARS_LIST);
+    if (
+      !stars &&
+      !(starsFailed && Date.now() - starsFailed.at < RETRY_AFTER_ERROR)
+    )
+      this.#loadStars().catch(() => {});
     const starred =
       stars && new Set(stars.value.map((entry) => entry.repo.toLowerCase()));
 
@@ -380,10 +398,12 @@ export class Explorer {
     return {
       repo,
       fetchedAt: new Date(fetchedAt).toISOString(),
-      entries: entries.map((entry, index) => ({
-        ...explore(entry, cached.get(keys[index]!), now),
-        starred: starred?.has(keys[index]!),
-      })),
+      entries: entries.map((entry, index) => {
+        const explored = explore(entry, cached.get(keys[index]!), now);
+        // Stars hold GitHub's canonical name, which a renamed entry lacks.
+        const canonical = explored.metrics?.repo ?? entry.repo;
+        return { ...explored, starred: starred?.has(canonical.toLowerCase()) };
+      }),
       pending: keys.filter((key) => this.#queue.has(key)).length,
       refreshing,
       error: error ?? this.#queueError,
@@ -496,10 +516,13 @@ export class Explorer {
       return { ...cached, refreshing: false };
 
     const failed = this.#listErrors.get(key);
-    const message = failed && `showing a cached copy: ${failed.message}`;
+    const message = failed && `showing a cached copy: ${failed.error.message}`;
     let load = this.#listLoads.get(key);
-    if (!load && cached && failed && Date.now() - failed.at < RETRY_AFTER_ERROR)
-      return { ...cached, refreshing: false, error: message };
+    if (!load && failed && Date.now() - failed.at < RETRY_AFTER_ERROR) {
+      // A list gone from GitHub is reported, not served from its cache.
+      if (failed.error instanceof NotFoundError) throw failed.error;
+      if (cached) return { ...cached, refreshing: false, error: message };
+    }
 
     if (!load) {
       load = this.#fetchAndStore(key, fetchEntries).finally(() =>
@@ -508,8 +531,7 @@ export class Explorer {
       this.#listLoads.set(key, load);
       load.then(
         () => this.#listErrors.delete(key),
-        (error: Error) =>
-          this.#listErrors.set(key, { message: error.message, at: Date.now() }),
+        (error: Error) => this.#listErrors.set(key, { error, at: Date.now() }),
       );
     }
     if (!cached) return { ...(await load), refreshing: false };
