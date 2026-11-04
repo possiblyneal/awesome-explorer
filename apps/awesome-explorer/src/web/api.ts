@@ -36,6 +36,24 @@ export async function translate(text: string): Promise<string> {
   return body.text;
 }
 
+/** Stars or unstars a repository on GitHub. */
+export async function setStarred(
+  repo: string,
+  starred: boolean,
+): Promise<void> {
+  const response = await fetch(`/api/stars/${repo}`, {
+    method: starred ? "PUT" : "DELETE",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as {
+      error?: string;
+    };
+    throw new Error(
+      `${starred ? "star" : "unstar"} failed: ${body.error ?? response.statusText}`,
+    );
+  }
+}
+
 /** Undoes a dismissal or snooze. */
 export async function restoreTrending(repo: string): Promise<void> {
   const response = await fetch(`/api/trending/${repo}`, { method: "DELETE" });

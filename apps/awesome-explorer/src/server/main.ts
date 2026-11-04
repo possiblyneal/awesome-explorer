@@ -1,7 +1,11 @@
 // One process serves the JSON API and the UI: through Vite's dev middleware in
 // development, and from the built dist/web in production.
 
-import express, { type ErrorRequestHandler } from "express";
+import express, {
+  type ErrorRequestHandler,
+  type Request,
+  type Response,
+} from "express";
 import { loadConfig } from "./config.ts";
 import { Explorer, NotFoundError } from "./explorer.ts";
 import { GitHub, RateLimitError } from "./github.ts";
@@ -33,6 +37,28 @@ app.get("/api/lists/:owner/:name", async (req, res) => {
 app.get("/api/stars", async (_req, res) => {
   res.json(await explorer.stars());
 });
+
+app.put("/api/stars/:owner/:name", async (req, res) => {
+  await setStarred(req, res, true);
+});
+
+app.delete("/api/stars/:owner/:name", async (req, res) => {
+  await setStarred(req, res, false);
+});
+
+async function setStarred(
+  req: Request<{ owner: string; name: string }>,
+  res: Response,
+  starred: boolean,
+): Promise<void> {
+  const { owner, name } = req.params;
+  if (!NAME.test(owner) || !NAME.test(name)) {
+    res.status(400).json({ error: "expected a repository as owner/name" });
+    return;
+  }
+  await explorer.setStarred(`${owner}/${name}`, starred);
+  res.status(204).end();
+}
 
 app.get("/api/trending", async (_req, res) => {
   res.json(await explorer.trending());

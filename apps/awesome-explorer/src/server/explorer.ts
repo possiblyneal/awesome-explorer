@@ -31,7 +31,6 @@ import { mayNeedTranslation } from "../shared/translation.ts";
 
 const HOUR = 3_600_000;
 const FRESH_FOR = 24 * HOUR;
-const STARS_FRESH_FOR = HOUR;
 const TRENDING_FRESH_FOR = HOUR;
 const SNOOZE_FOR = 30 * 24 * HOUR;
 const FAILED_FRESH_FOR = HOUR;
@@ -62,6 +61,9 @@ const RATE_TIMEOUT = 60_000;
 const TRANSLATION_FRESH_FOR = 7 * 24 * HOUR;
 
 export class NotFoundError extends Error {}
+
+/** A list's entries, and whether a stale copy is being refreshed behind them. */
+type Loaded = Cached<ListEntry[]> & { refreshing: boolean; error?: string };
 
 /** Waits for `work`, but no longer than `ms`. */
 async function atMost(work: Promise<unknown>, ms: number): Promise<void> {
@@ -119,6 +121,8 @@ export class Explorer {
   /** Wakes the drain loop when an in-flight repository finishes. */
   #slotFreed: (() => void) | undefined;
   #listLoads = new Map<string, Promise<Cached<ListEntry[]>>>();
+  /** The last failed refresh of a list served stale meanwhile, by list key. */
+  #listErrors = new Map<string, { message: string; at: number }>();
   #discoveries = new Map<
     string,
     { at: number; lists: Promise<DiscoveredList[]> }
@@ -316,6 +320,31 @@ export class Explorer {
     return pending;
   }
 
+  /** Stars or unstars a repository on GitHub, and updates the cached stars to match. */
+  async setStarred(repo: string, starred: boolean): Promise<void> {
+    await this.#github.setStarred(repo, starred);
+    const cached = this.#store.getList(STARS_LIST);
+    if (!cached) return;
+    const key = repo.toLowerCase();
+    const others = cached.value.filter(
+      (entry) => entry.repo.toLowerCase() !== key,
+    );
+    const hit = this.#store.getMetrics([key]).get(key)?.value;
+    const metrics = hit?.status === "found" ? hit.metrics : undefined;
+    const entry: ListEntry = {
+      repo: metrics?.repo ?? repo,
+      name: (metrics?.repo ?? repo).split("/")[1]!,
+      section: "",
+      description: metrics?.description ?? "",
+      lists: [],
+    };
+    this.#store.putList(
+      STARS_LIST,
+      starred ? [entry, ...others] : others,
+      cached.fetchedAt,
+    );
+  }
+
   /** Hides a repository from trending for good. */
   dismiss(repo: string): void {
     this.#store.putDismissal(repo.toLowerCase(), null);
@@ -331,14 +360,16 @@ export class Explorer {
     this.#store.deleteDismissal(repo.toLowerCase());
   }
 
-  async #view(
-    repo: string,
-    load: () => Promise<Cached<ListEntry[]> & { error?: string }>,
-  ): Promise<ListView> {
+  async #view(repo: string, load: () => Promise<Loaded>): Promise<ListView> {
     const now = new Date();
-    const { value: entries, fetchedAt, error } = await load();
+    const { value: entries, fetchedAt, refreshing, error } = await load();
     const keys = entries.map((entry) => entry.repo.toLowerCase());
     const cached = this.#store.getMetrics(keys);
+    const stars = this.#store.getList(STARS_LIST);
+    // Before the stars are first read, a list learns them on its next read.
+    if (!stars) this.#loadStars().catch(() => {});
+    const starred =
+      stars && new Set(stars.value.map((entry) => entry.repo.toLowerCase()));
 
     for (const key of keys) {
       const hit = cached.get(key);
@@ -349,10 +380,12 @@ export class Explorer {
     return {
       repo,
       fetchedAt: new Date(fetchedAt).toISOString(),
-      entries: entries.map((entry, index) =>
-        explore(entry, cached.get(keys[index]!), now),
-      ),
+      entries: entries.map((entry, index) => ({
+        ...explore(entry, cached.get(keys[index]!), now),
+        starred: starred?.has(keys[index]!),
+      })),
       pending: keys.filter((key) => this.#queue.has(key)).length,
+      refreshing,
       error: error ?? this.#queueError,
     };
   }
@@ -437,41 +470,50 @@ export class Explorer {
     return counts;
   }
 
-  /** The list's entries, refetched when a day old; a failed refetch serves the stale copy. */
-  #loadList(repo: string): Promise<Cached<ListEntry[]> & { error?: string }> {
+  /** The list's entries, refetched when a day old. */
+  #loadList(repo: string): Promise<Loaded> {
     return this.#load(repo.toLowerCase(), FRESH_FOR, () =>
       this.#fetchList(repo),
     );
   }
 
-  #loadStars(): Promise<Cached<ListEntry[]> & { error?: string }> {
-    return this.#load(STARS_LIST, STARS_FRESH_FOR, () => this.#fetchStars());
+  #loadStars(): Promise<Loaded> {
+    return this.#load(STARS_LIST, FRESH_FOR, () => this.#fetchStars());
   }
 
+  /**
+   * A fresh cached copy as is; a stale one at once while it refreshes in the
+   * background, retried RETRY_AFTER_ERROR after a failed refresh; with no copy
+   * at all, waits for the fetch.
+   */
   async #load(
     key: string,
     freshFor: number,
     fetchEntries: () => Promise<ListEntry[]>,
-  ): Promise<Cached<ListEntry[]> & { error?: string }> {
+  ): Promise<Loaded> {
     const cached = this.#store.getList(key);
-    if (cached && Date.now() - cached.fetchedAt < freshFor) return cached;
+    if (cached && Date.now() - cached.fetchedAt < freshFor)
+      return { ...cached, refreshing: false };
 
+    const failed = this.#listErrors.get(key);
+    const message = failed && `showing a cached copy: ${failed.message}`;
     let load = this.#listLoads.get(key);
+    if (!load && cached && failed && Date.now() - failed.at < RETRY_AFTER_ERROR)
+      return { ...cached, refreshing: false, error: message };
+
     if (!load) {
       load = this.#fetchAndStore(key, fetchEntries).finally(() =>
         this.#listLoads.delete(key),
       );
       this.#listLoads.set(key, load);
+      load.then(
+        () => this.#listErrors.delete(key),
+        (error: Error) =>
+          this.#listErrors.set(key, { message: error.message, at: Date.now() }),
+      );
     }
-    try {
-      return await load;
-    } catch (error) {
-      if (!cached || error instanceof NotFoundError) throw error;
-      return {
-        ...cached,
-        error: `showing a cached copy: ${(error as Error).message}`,
-      };
-    }
+    if (!cached) return { ...(await load), refreshing: false };
+    return { ...cached, refreshing: true, error: message };
   }
 
   async #fetchAndStore(

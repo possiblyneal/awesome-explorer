@@ -5,18 +5,21 @@ import type {
   ListView as ListData,
   RepoMetrics,
 } from "../shared/types.ts";
-import { STARS_LIST } from "../shared/index-list.ts";
-import { fetchList, fetchStars } from "./api.ts";
+import { INDEX_LIST, STARS_LIST } from "../shared/index-list.ts";
+import { fetchList, fetchStars, setStarred } from "./api.ts";
 import { ago, compact, listHref } from "./format.ts";
 
 const POLL_MS = 3000;
 
 const LABELS: { label: HealthLabel; title: string }[] = [
-  { label: "mature", title: "Mature: the safe pick" },
-  { label: "active", title: "Active: under steady development" },
-  { label: "rising", title: "Rising: the up-and-comers" },
-  { label: "stale", title: "Stale: maintained only occasionally" },
-  { label: "dead", title: "Dead: archived or abandoned" },
+  {
+    label: "mature",
+    title: "Mature: a year old and keeping its backlog small",
+  },
+  { label: "active", title: "Active: under development" },
+  { label: "rising", title: "Rising: 20+ stars a day and growing 5%+ a month" },
+  { label: "stale", title: "Stale: no commit in over a year" },
+  { label: "dead", title: "Dead: archived, or no commit in two years" },
 ];
 
 type SortValue = number | string | null | undefined;
@@ -284,9 +287,9 @@ function useList(repo: string) {
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
-    // A failed poll retries while metrics were still arriving, so one dropped
-    // request does not freeze the list half-filled.
-    let lastPending = 0;
+    // A failed poll retries while metrics or entries were still arriving, so
+    // one dropped request does not freeze the list half-filled.
+    let polling = false;
     async function load() {
       try {
         const view = await (repo === STARS_LIST
@@ -295,12 +298,12 @@ function useList(repo: string) {
         if (cancelled) return;
         setData(view);
         setError(undefined);
-        lastPending = view.pending;
-        if (view.pending > 0) timer = window.setTimeout(load, POLL_MS);
+        polling = view.pending > 0 || view.refreshing;
+        if (polling) timer = window.setTimeout(load, POLL_MS);
       } catch (reason) {
         if (cancelled) return;
         setError((reason as Error).message);
-        if (lastPending > 0) timer = window.setTimeout(load, POLL_MS);
+        if (polling) timer = window.setTimeout(load, POLL_MS);
       }
     }
     void load();
@@ -332,11 +335,34 @@ const percent = (share: number | null | undefined) =>
 const days = (value: number | null | undefined) =>
   value != null ? `${value}d` : "";
 
-function Row({ entry }: { entry: ExploredEntry }) {
+// The index links only lists; elsewhere an "awesome" name is the cheap sign of one.
+const isList = (repo: string, inIndex: boolean) =>
+  inIndex || /awesome/i.test(repo);
+
+function Row({
+  entry,
+  inIndex,
+  onStar,
+}: {
+  entry: ExploredEntry;
+  inIndex: boolean;
+  onStar: (repo: string, starred: boolean) => void;
+}) {
   const m = entry.metrics;
+  const repo = m?.repo ?? entry.repo;
   return (
     <tr className={m?.archived ? "archived" : undefined}>
       <td>
+        {entry.starred !== undefined && (
+          <button
+            className="star"
+            aria-pressed={entry.starred}
+            title={entry.starred ? "Unstar on GitHub" : "Star on GitHub"}
+            onClick={() => onStar(repo, !entry.starred)}
+          >
+            {entry.starred ? "★" : "☆"}
+          </button>
+        )}
         <a
           href={m?.url ?? `https://github.com/${entry.repo}`}
           target="_blank"
@@ -345,13 +371,15 @@ function Row({ entry }: { entry: ExploredEntry }) {
           {entry.name}
         </a>{" "}
         <span className="muted">{entry.repo}</span>
-        <a
-          className="explore"
-          href={listHref(m?.repo ?? entry.repo)}
-          title="Open this repository as an awesome list"
-        >
-          explore →
-        </a>
+        {isList(repo, inIndex) && (
+          <a
+            className="explore"
+            href={listHref(repo)}
+            title="Open this repository as an awesome list"
+          >
+            explore list →
+          </a>
+        )}
         <div className="description">{entry.description || m?.description}</div>
         <div className="tags">
           {entry.section && <span>{entry.section}</span>}
@@ -406,8 +434,39 @@ export function ListView({ repo }: { repo: string }) {
     hideArchived: false,
   });
   const [sort, setSort] = useState({ key: "score", descending: true });
+  // Stars toggled here, shown at once and reverted if GitHub refuses.
+  const [starOverrides, setStarOverrides] = useState(
+    new Map<string, boolean>(),
+  );
+  const [starError, setStarError] = useState<string>();
 
-  const entries = useMemo(() => data?.entries ?? [], [data]);
+  async function star(repo: string, starred: boolean) {
+    const key = repo.toLowerCase();
+    const override = (value: boolean | undefined) =>
+      setStarOverrides((current) => {
+        const next = new Map(current);
+        if (value === undefined) next.delete(key);
+        else next.set(key, value);
+        return next;
+      });
+    override(starred);
+    setStarError(undefined);
+    try {
+      await setStarred(repo, starred);
+    } catch (reason) {
+      override(undefined);
+      setStarError((reason as Error).message);
+    }
+  }
+
+  const entries = useMemo(
+    () =>
+      (data?.entries ?? []).map((entry) => {
+        const starred = starOverrides.get(entry.repo.toLowerCase());
+        return starred === undefined ? entry : { ...entry, starred };
+      }),
+    [data, starOverrides],
+  );
   const sections = useMemo(
     () => [...new Set(entries.map((e) => e.section).filter(Boolean))],
     [entries],
@@ -492,12 +551,13 @@ export function ListView({ repo }: { repo: string }) {
         {data && (
           <span className="muted">
             {entries.length} repositories
+            {data.refreshing && " · refreshing…"}
             {data.pending > 0 && ` · fetching metrics for ${data.pending}…`}
           </span>
         )}
       </div>
-      {(error ?? data?.error) && (
-        <p className="error">{error ?? data?.error}</p>
+      {(error ?? starError ?? data?.error) && (
+        <p className="error">{error ?? starError ?? data?.error}</p>
       )}
       {!data && !error && (
         <p className="muted">
@@ -723,7 +783,12 @@ export function ListView({ repo }: { repo: string }) {
               </thead>
               <tbody>
                 {rows.map((entry) => (
-                  <Row key={entry.repo} entry={entry} />
+                  <Row
+                    key={entry.repo}
+                    entry={entry}
+                    inIndex={repo === INDEX_LIST}
+                    onStar={star}
+                  />
                 ))}
               </tbody>
             </table>
