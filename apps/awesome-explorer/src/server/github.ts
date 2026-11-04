@@ -116,6 +116,15 @@ export class GitHub {
     }
   }
 
+  /** Stars or unstars the repository for the token's user. */
+  async setStarred(repo: string, starred: boolean): Promise<void> {
+    const response = await this.#request(`/user/starred/${repo}`, {
+      method: starred ? "PUT" : "DELETE",
+    });
+    if (response.status === 404)
+      throw new GitHubError(404, `GitHub has no repository ${repo}`);
+  }
+
   async searchRepositories(query: string): Promise<SearchItem[]> {
     const params = new URLSearchParams({
       q: query,

@@ -42,54 +42,69 @@ describe("assessHealth", () => {
     });
   });
 
-  it("calls a repository with no commit for a year dead", () => {
-    expect(assessHealth(repo({ lastCommitAt: daysAgo(400) }), NOW).label).toBe(
+  it("calls a repository with no commit for two years dead", () => {
+    expect(assessHealth(repo({ lastCommitAt: daysAgo(740) }), NOW).label).toBe(
       "dead",
     );
     expect(assessHealth(repo({ lastCommitAt: null }), NOW).label).toBe("dead");
   });
 
-  it("calls a young repository gaining stars fast rising", () => {
-    const young = { createdAt: daysAgo(200), stars: 800 };
-    expect(assessHealth(repo({ ...young, stars30d: 60 }), NOW).label).toBe(
+  it("calls a repository gaining stars fast rising, whatever its age", () => {
+    expect(assessHealth(repo({ stars: 9000, stars30d: 600 }), NOW).label).toBe(
       "rising",
     );
-    expect(assessHealth(repo({ ...young, stars30d: 45 }), NOW).label).toBe(
-      "rising",
-    );
+    // A big repository's steady gain is popularity, not growth.
     expect(
-      assessHealth(repo({ ...young, stars: 5000, stars30d: 15 }), NOW).label,
+      assessHealth(repo({ stars: 50_000, stars30d: 900 }), NOW).label,
+    ).not.toBe("rising");
+    // A fast share of a few stars is not popular yet.
+    expect(
+      assessHealth(repo({ stars: 800, stars30d: 300 }), NOW).label,
+    ).not.toBe("rising");
+    expect(
+      assessHealth(
+        repo({ stars: 9000, stars30d: 600, lastCommitAt: daysAgo(100) }),
+        NOW,
+      ).label,
     ).not.toBe("rising");
   });
 
-  it("calls an established, maintained repository with a small backlog mature", () => {
+  it("calls a year-old repository keeping its backlog small mature, whatever its size or pace", () => {
     expect(assessHealth(repo({}), NOW).label).toBe("mature");
     expect(
-      assessHealth(repo({ openIssues: 400, backlog: 0.4 }), NOW).label,
-    ).toBe("active");
-  });
-
-  it("calls a busy repository that is not established active", () => {
-    expect(assessHealth(repo({ stars: 300 }), NOW).label).toBe("active");
-  });
-
-  it("calls a lightly developed repository that handles issues fast active", () => {
-    const light = { stars: 300, commits90d: 2 };
-    const fast = assessHealth(repo({ ...light, medianHandleDays: 7 }), NOW);
-    expect(fast).toMatchObject({ label: "active" });
-    expect(fast.reasons[0]).toContain("handling issues fast");
-    expect(
-      assessHealth(repo({ ...light, medianHandleDays: 8 }), NOW).label,
-    ).toBe("stale");
-  });
-
-  it("calls a quiet repository stale", () => {
-    expect(
       assessHealth(
-        repo({ stars: 300, lastCommitAt: daysAgo(200), commits90d: 0 }),
+        repo({
+          stars: 40,
+          commits90d: 400,
+          openIssues: 900,
+          openPullRequests: 200,
+          lastCommitAt: daysAgo(300),
+        }),
         NOW,
       ).label,
+    ).toBe("mature");
+    expect(assessHealth(repo({ backlog: null }), NOW).label).toBe("mature");
+    // Too new for a small backlog to mean few bugs.
+    expect(assessHealth(repo({ createdAt: daysAgo(200) }), NOW).label).toBe(
+      "active",
+    );
+  });
+
+  it("calls a repository with no commit for over a year stale", () => {
+    expect(
+      assessHealth(repo({ lastCommitAt: daysAgo(400), commits90d: 0 }), NOW)
+        .label,
     ).toBe("stale");
+  });
+
+  it("calls everything else active", () => {
+    expect(assessHealth(repo({ backlog: 0.15 }), NOW).label).toBe("active");
+    expect(
+      assessHealth(
+        repo({ backlog: 0.3, commits90d: 0, lastCommitAt: daysAgo(300) }),
+        NOW,
+      ).label,
+    ).toBe("active");
   });
 
   it("ranks a responsive repository above a neglected one", () => {

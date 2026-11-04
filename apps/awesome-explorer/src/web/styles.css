@@ -154,6 +154,8 @@ h2 {
 
 .table-wrap {
   overflow-x: auto;
+  /* Room for the last tilted header, which leans past its column. */
+  padding-right: 56px;
 }
 
 table {
@@ -173,6 +175,21 @@ th {
   white-space: nowrap;
   color: var(--muted);
   font-weight: 600;
+}
+
+/* Numeric headers lean 45° so each column is as narrow as its numbers. */
+th.num {
+  height: 80px;
+  vertical-align: bottom;
+}
+
+th.num > button {
+  display: block;
+  width: 1.5em;
+  margin-left: auto;
+  text-align: left;
+  transform-origin: left bottom;
+  transform: translateX(0.75em) rotate(-45deg);
 }
 
 .num {
@@ -211,6 +228,17 @@ tr.archived td {
 button {
   font: inherit;
   cursor: pointer;
+}
+
+button.star {
+  background: none;
+  border: none;
+  padding: 0 4px 0 0;
+  color: var(--muted);
+}
+
+button.star[aria-pressed="true"] {
+  color: var(--rising);
 }
 
 button.sort,

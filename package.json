@@ -16,5 +16,8 @@
     "lint:fix": "npm run lint:fix --workspaces",
     "test": "npm run test --workspaces",
     "typecheck": "npm run typecheck --workspaces"
+  },
+  "overrides": {
+    "minimatch": "^11.0.1"
   }
 }

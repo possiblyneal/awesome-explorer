@@ -59,6 +59,8 @@ export interface ExploredEntry extends ListEntry {
   health?: Health;
   /** Why no metrics are shown: GitHub has no such repository, or fetching it failed. */
   unavailable?: string;
+  /** Whether the operator has starred it; unknown until their stars are first read. */
+  starred?: boolean;
 }
 
 export interface ListView {
@@ -68,6 +70,8 @@ export interface ListView {
   entries: ExploredEntry[];
   /** Entries whose metrics are still being fetched or refreshed. */
   pending: number;
+  /** A stale copy of the entries is shown while they are refetched. */
+  refreshing: boolean;
   error?: string;
 }
 

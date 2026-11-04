@@ -212,6 +212,124 @@ describe("Explorer.stars", () => {
     ).toEqual([["acme/starred", ""]]);
     expect(view.entries[0]!.lists).toEqual(["Tools"]);
     expect(view.pending).toBe(1);
+    expect(view.refreshing).toBe(false);
+  });
+
+  it("shows stale stars at once while refreshing them in the background", async () => {
+    const store = new Store(":memory:");
+    const stale = {
+      repo: "acme/old",
+      name: "old",
+      section: "",
+      description: "",
+    };
+    store.putList(STARS_LIST, [stale], Date.now() - 25 * 60 * 60 * 1000);
+    let answer!: (starred: unknown[]) => void;
+    let refuse!: (error: Error) => void;
+    const github = {
+      starred: () =>
+        new Promise((resolve, reject) => {
+          answer = resolve;
+          refuse = reject;
+        }),
+      graphql: async (query: string) =>
+        query.includes("viewer") ? STAR_LISTS : new Promise(() => {}),
+      starHistory: async () => [],
+    };
+    const stars = new Explorer(
+      github as unknown as GitHub,
+      store,
+      async () => [],
+    );
+
+    let view = await stars.stars();
+    expect(view.entries.map((entry) => entry.repo)).toEqual(["acme/old"]);
+    expect(view.refreshing).toBe(true);
+
+    refuse(new Error("502 Bad Gateway"));
+    await vi.waitFor(async () =>
+      expect((await stars.stars()).error).toMatch(/cached copy: 502/),
+    );
+    // A failed refresh waits a minute, so polling does not refetch every few seconds.
+    view = await stars.stars();
+    expect(view.refreshing).toBe(false);
+
+    vi.useFakeTimers({ now: Date.now() + 61_000, toFake: ["Date"] });
+    view = await stars.stars();
+    vi.useRealTimers();
+    expect(view.refreshing).toBe(true);
+    answer([{ full_name: "acme/new", name: "new", description: null }]);
+    await vi.waitFor(async () => {
+      view = await stars.stars();
+      expect(view.refreshing).toBe(false);
+    });
+    expect(view.entries.map((entry) => entry.repo)).toEqual(["acme/new"]);
+    expect(view.error).toBeUndefined();
+  });
+});
+
+describe("Explorer.setStarred", () => {
+  it("marks entries starred from cached stars, and stars and unstars without a refetch", async () => {
+    const calls: [string, boolean][] = [];
+    let starredReads = 0;
+    const github = {
+      readme: async (repo: string) => READMES[repo] ?? null,
+      starred: async () => {
+        starredReads++;
+        return [
+          { full_name: "acme/one", name: "one", description: null },
+          { full_name: "Acme/Starred", name: "Starred", description: null },
+        ];
+      },
+      graphql: async (query: string) =>
+        query.includes("viewer") ? STAR_LISTS : new Promise(() => {}),
+      setStarred: async (repo: string, starred: boolean) => {
+        calls.push([repo, starred]);
+      },
+    };
+    const app = new Explorer(
+      github as unknown as GitHub,
+      new Store(":memory:"),
+      async () => [],
+    );
+    const starredIn = async () =>
+      (await app.list("acme/awesome-listed")).entries.map((entry) => [
+        entry.repo,
+        entry.starred,
+      ]);
+
+    // Unknown until the stars have been read once; reading them starts then.
+    expect(await starredIn()).toEqual([
+      ["acme/one", undefined],
+      ["acme/two", undefined],
+    ]);
+    await vi.waitFor(async () =>
+      expect(await starredIn()).toEqual([
+        ["acme/one", true],
+        ["acme/two", false],
+      ]),
+    );
+
+    await app.setStarred("acme/two", true);
+    await app.setStarred("acme/one", false);
+    // Starring again keeps the entry and its star lists.
+    await app.setStarred("acme/starred", true);
+    expect(calls).toEqual([
+      ["acme/two", true],
+      ["acme/one", false],
+      ["acme/starred", true],
+    ]);
+    expect(await starredIn()).toEqual([
+      ["acme/one", false],
+      ["acme/two", true],
+    ]);
+    expect(
+      (await app.stars()).entries.map((entry) => [entry.repo, entry.lists]),
+    ).toMatchObject([
+      ["acme/two", []],
+      ["Acme/Starred", ["Tools"]],
+    ]);
+    expect(starredReads).toBe(1);
   });
 });
 
