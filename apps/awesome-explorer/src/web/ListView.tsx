@@ -461,8 +461,8 @@ export function ListView({ repo }: { repo: string }) {
   const entries = useMemo(
     () =>
       (data?.entries ?? []).map((entry) => {
-        const repo = entry.metrics?.repo ?? entry.repo;
-        const starred = starOverrides.get(repo.toLowerCase());
+        const canonical = entry.metrics?.repo ?? entry.repo;
+        const starred = starOverrides.get(canonical.toLowerCase());
         return starred === undefined ? entry : { ...entry, starred };
       }),
     [data, starOverrides],
