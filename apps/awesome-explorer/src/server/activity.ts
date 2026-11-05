@@ -1,7 +1,7 @@
 // How a repository's maintainers keep up with what people send them, from one
 // GraphQL query per repository: GitHub refuses a batch of these searches for
 // exceeding its resource budget. Search does not follow a renamed repository,
-// so callers pass the canonical `nameWithOwner` (see docs/LESSONS.md).
+// so callers pass the canonical `nameWithOwner`.
 //
 // An issue or pull request is handled when it was merged or a person closed
 // it; one a bot closed (stale sweeps) counts as unhandled, as does one still

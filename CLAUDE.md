@@ -63,7 +63,6 @@ Single operator (see `GLOSSARY.md`). One unit, `apps/awesome-explorer`, run long
 ## Work Guidance
 
 - Domain words (list, entry, index, discovery, health label) are defined in `GLOSSARY.md`; use them.
-- GitHub API quirks this app depends on are in `docs/LESSONS.md`; read it before changing a query.
 
 ## Verification
 
