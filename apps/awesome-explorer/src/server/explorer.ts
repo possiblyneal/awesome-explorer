@@ -38,8 +38,8 @@ const DISCOVER_FRESH_FOR = HOUR / 6;
 const RETRY_AFTER_ERROR = 60_000;
 /**
  * Repositories being fetched at once; a slow one holds up only its own slot.
- * More would not be faster: GitHub's GraphQL CPU budget bounds throughput
- * (docs/LESSONS.md).
+ * More would not be faster: GitHub's secondary limit of 60 s of GraphQL server
+ * time a minute bounds throughput.
  */
 const POOL_SIZE = 10;
 /** Fewest README links a list outside the index needs; measured products stop near 30, lists start past 80. */
